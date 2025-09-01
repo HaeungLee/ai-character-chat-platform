@@ -1,0 +1,23 @@
+{
+  "name": "ai-character-chat-platform",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "lerna run dev --parallel",
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "lint": "lerna run lint",
+    "clean": "lerna clean",
+    "bootstrap": "lerna bootstrap",
+    "start": "lerna run start --parallel"
+  },
+  "devDependencies": {
+    "lerna": "^8.2.3"
+  },
+  "keywords": ["ai", "chat", "character", "image-generation"],
+  "author": "AI Character Chat Platform Team",
+  "license": "MIT"
+}

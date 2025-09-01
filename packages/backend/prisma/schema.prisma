@@ -1,0 +1,268 @@
+// AI 캐릭터 채팅 플랫폼 데이터베이스 스키마
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 사용자 모델
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  username    String?  @unique
+  password    String
+  avatar      String?
+  bio         String?
+  role        UserRole @default(USER)
+  status      UserStatus @default(ACTIVE)
+
+  // 소셜 로그인 정보
+  googleId    String?  @unique
+  githubId    String?  @unique
+
+  // 구독 정보
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  // 채팅 관련
+  chats       Chat[]
+
+  // 결제 기록
+  payments    Payment[]
+
+  // 이미지 생성 기록
+  imageGenerations ImageGeneration[]
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+
+  @@map("users")
+}
+
+// AI 캐릭터 모델
+model Character {
+  id          String   @id @default(cuid())
+  name        String
+  avatar      String?
+  description String?
+  personality String?  // 캐릭터 성격 설명
+  systemPrompt String  // AI 시스템 프롬프트
+
+  // 캐릭터 설정
+  voice       String?  // 음성 설정
+  appearance  String?  // 외모 설명
+  background  String?  // 캐릭터 배경
+
+  // 카테고리 및 태그
+  category    String?
+  tags        String[]
+
+  // 사용 통계
+  usageCount  Int      @default(0)
+  rating      Float?   @default(0)
+  reviewCount Int      @default(0)
+
+  // 채팅 세션
+  chats       Chat[]
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isActive    Boolean  @default(true)
+
+  @@map("characters")
+}
+
+// 채팅 세션 모델
+model Chat {
+  id          String   @id @default(cuid())
+  title       String?
+
+  // 관계
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  // 채팅 설정
+  model       String   @default("gpt-4") // 사용된 AI 모델
+  temperature Float?   @default(0.7)
+  maxTokens   Int?     @default(1000)
+
+  // 메시지
+  messages    Message[]
+
+  // 통계
+  messageCount Int     @default(0)
+  totalTokens  Int     @default(0)
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastActivity DateTime @default(now())
+
+  @@map("chats")
+}
+
+// 메시지 모델
+model Message {
+  id          String   @id @default(cuid())
+
+  // 관계
+  chatId      String
+  chat        Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  // 메시지 내용
+  role        MessageRole // user, assistant
+  content     String
+  tokens      Int?     // 토큰 수
+
+  // 메타데이터
+  metadata    Json?    // 추가 메타데이터 (이미지 URL 등)
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+
+  @@map("messages")
+}
+
+// 이미지 생성 기록 모델
+model ImageGeneration {
+  id          String   @id @default(cuid())
+
+  // 사용자 정보
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 생성 정보
+  prompt      String
+  negativePrompt String?
+  model       String   @default("dall-e-3")
+  style       String?
+  size        String   @default("1024x1024")
+
+  // 결과
+  imageUrl    String
+  status      GenerationStatus @default(PENDING)
+
+  // 비용 계산
+  cost        Float?   // 생성 비용 (크레딧)
+  tokens      Int?     // 사용된 토큰 수
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@map("image_generations")
+}
+
+// 구독 플랜 모델
+model Subscription {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // 가격 및 기간
+  price       Float
+  currency    String   @default("USD")
+  interval    SubscriptionInterval // monthly, yearly
+  credits     Int      // 월별 크레딧 수
+
+  // 기능 제한
+  maxChats    Int?     // 최대 채팅 수
+  maxImages   Int?     // 최대 이미지 생성 수
+  priority    Boolean  @default(false) // 우선 처리
+
+  // 사용자
+  users       User[]
+
+  // 결제 기록
+  payments    Payment[]
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isActive    Boolean  @default(true)
+
+  @@map("subscriptions")
+}
+
+// 결제 기록 모델
+model Payment {
+  id          String   @id @default(cuid())
+
+  // 사용자 정보
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 결제 정보
+  amount      Float
+  currency    String   @default("USD")
+  status      PaymentStatus @default(PENDING)
+
+  // Stripe 정보
+  stripePaymentIntentId String? @unique
+  stripeCustomerId      String?
+
+  // 구독 정보
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  // 메타데이터
+  metadata    Json?
+
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@map("payments")
+}
+
+// 열거형 정의
+enum UserRole {
+  USER
+  ADMIN
+  PREMIUM
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BANNED
+  SUSPENDED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum GenerationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum SubscriptionInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}

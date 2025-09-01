@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 데이터베이스
+  postgres:
+    image: postgres:17-alpine
+    container_name: ai_chat_postgres
+    environment:
+      POSTGRES_DB: ai_chat_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_ROOT_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/backend/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - ai_chat_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_chat_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MongoDB 데이터베이스
+  mongodb:
+    image: mongo:7-jammy
+    container_name: ai_chat_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: mongodb123
+      MONGO_INITDB_DATABASE: ai_chat_platform
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - ./packages/backend/docker/mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - ai_chat_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis 캐시
+  redis:
+    image: redis:7-alpine
+    container_name: ai_chat_redis
+    command: redis-server --appendonly yes --requirepass redis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai_chat_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 백엔드 API
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+    container_name: ai_chat_backend
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      DATABASE_URL: postgresql://postgres:postgres123@postgres:5432/ai_chat_platform?schema=public
+      MONGODB_URI: mongodb://admin:mongodb123@mongodb:27017/ai_chat_platform
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: redis123
+      JWT_SECRET: your-backend-jwt-secret-key-here-make-it-very-long-and-secure
+      JWT_REFRESH_SECRET: your-backend-refresh-secret-key-here-make-it-different
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+      STABILITY_API_KEY: ${STABILITY_API_KEY:-}
+      CORS_ORIGIN: http://localhost:3000
+      LOG_LEVEL: info
+      SOCKET_CORS_ORIGIN: http://localhost:3000
+      SESSION_SECRET: your-session-secret-key-here-make-it-secure
+      API_KEY_ENCRYPTION_KEY: your-32-character-encryption-key-here
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./packages/backend/logs:/app/logs
+      - ./packages/backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_chat_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # 프론트엔드
+  frontend:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
+    container_name: ai_chat_frontend
+    environment:
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:8000
+      NEXT_PUBLIC_JWT_SECRET: your-frontend-jwt-secret-key-here
+      NEXT_PUBLIC_JWT_REFRESH_SECRET: your-frontend-refresh-secret-key-here
+      NEXT_PUBLIC_JWT_EXPIRES_IN: 15m
+      NEXT_PUBLIC_JWT_REFRESH_EXPIRES_IN: 7d
+      NEXT_PUBLIC_DEBUG: false
+      NEXT_PUBLIC_ENABLE_ANALYTICS: false
+      NEXT_PUBLIC_ENABLE_PWA: false
+      NEXT_PUBLIC_ENABLE_NOTIFICATIONS: true
+      NEXT_PUBLIC_ENABLE_IMAGE_HISTORY: true
+      NEXT_PUBLIC_ENABLE_CHARACTER_CUSTOMIZATION: true
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - ai_chat_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Nginx 리버스 프록시 (선택사항)
+  nginx:
+    image: nginx:alpine
+    container_name: ai_chat_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - ai_chat_network
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  ai_chat_network:
+    driver: bridge
