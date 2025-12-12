@@ -79,6 +79,77 @@ export class OpenAIService {
     }
   }
 
+  // 🆕 캐릭터 기반 스트리밍 응답 생성 (타자기 효과)
+  async *generateCharacterResponseStream(
+    character: CharacterPrompt,
+    userMessage: string,
+    conversationHistory: ChatMessage[] = []
+  ): AsyncGenerator<string, void, unknown> {
+    try {
+      const messages: ChatMessage[] = [
+        {
+          role: 'system',
+          content: this.buildCharacterSystemPrompt(character)
+        },
+        ...conversationHistory.slice(-10),
+        {
+          role: 'user',
+          content: userMessage
+        }
+      ]
+
+      const stream = await this.client.chat.completions.create({
+        model: this.defaultModel,
+        messages,
+        temperature: character.temperature || this.defaultTemperature,
+        max_tokens: this.defaultMaxTokens,
+        presence_penalty: 0.6,
+        frequency_penalty: 0.5,
+        stream: true, // 스트리밍 활성화
+      })
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content
+        if (content) {
+          yield content
+        }
+      }
+    } catch (error) {
+      logger.error('OpenAI 스트리밍 응답 생성 실패:', error)
+      throw new Error('AI 스트리밍 응답 생성 중 오류가 발생했습니다.')
+    }
+  }
+
+  // 🆕 일반 채팅 스트리밍 응답 생성
+  async *generateChatResponseStream(
+    messages: ChatMessage[],
+    options?: {
+      model?: string
+      temperature?: number
+      maxTokens?: number
+    }
+  ): AsyncGenerator<string, void, unknown> {
+    try {
+      const stream = await this.client.chat.completions.create({
+        model: options?.model || this.defaultModel,
+        messages,
+        temperature: options?.temperature || this.defaultTemperature,
+        max_tokens: options?.maxTokens || this.defaultMaxTokens,
+        stream: true,
+      })
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content
+        if (content) {
+          yield content
+        }
+      }
+    } catch (error) {
+      logger.error('OpenAI 스트리밍 채팅 응답 생성 실패:', error)
+      throw new Error('AI 스트리밍 응답 생성 중 오류가 발생했습니다.')
+    }
+  }
+
   // 일반 채팅 응답 생성
   async generateChatResponse(
     messages: ChatMessage[],

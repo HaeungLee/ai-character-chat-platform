@@ -102,6 +102,11 @@ export class SocketService {
       this.handleMessageSend(socket, userId, data)
     })
 
+    // 🆕 스트리밍 메시지 전송 (타자기 효과)
+    socket.on('message:send:stream', (data) => {
+      this.handleMessageSendStream(socket, userId, data)
+    })
+
     // 타이핑 시작
     socket.on('typing:start', (data) => {
       this.handleTypingStart(socket, userId, data)
@@ -310,6 +315,130 @@ export class SocketService {
     } catch (error) {
       logger.error('Message send error:', error)
       socket.emit('error', { message: 'Failed to send message' })
+    }
+  }
+
+  // 🆕 스트리밍 메시지 전송 처리 (타자기 효과)
+  private async handleMessageSendStream(socket: Socket, userId: string, data: any) {
+    try {
+      const { content, characterId, roomId, conversationHistory = [] } = data
+
+      if (!content || !roomId) {
+        socket.emit('error', { message: 'Content and roomId are required' })
+        return
+      }
+
+      const userConnection = this.connectedUsers.get(userId)
+      if (!userConnection || userConnection.roomId !== roomId) {
+        socket.emit('error', { message: 'Not in the specified room' })
+        return
+      }
+
+      // 사용자 메시지 전송
+      const userMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        content,
+        senderId: userId,
+        characterId,
+        role: 'user',
+        timestamp: new Date().toISOString(),
+        roomId,
+      }
+
+      this.io.to(roomId).emit('message', userMessage)
+      logger.info(`Message sent by ${userId} in room ${roomId}`)
+
+      // AI 캐릭터 스트리밍 응답 생성
+      if (characterId) {
+        const character = await this.getCharacterById(characterId)
+        if (!character) {
+          socket.emit('error', { message: 'Character not found' })
+          return
+        }
+
+        const aiMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+        // 스트리밍 시작 알림
+        this.io.to(roomId).emit('message:stream:start', {
+          id: aiMessageId,
+          characterId,
+          characterName: character.name,
+          roomId,
+          timestamp: new Date().toISOString(),
+        })
+
+        // AI 타이핑 표시
+        this.io.to(roomId).emit('typing:start', {
+          userId: 'ai',
+          characterId,
+          roomId,
+          timestamp: new Date().toISOString(),
+        })
+
+        let fullResponse = ''
+
+        try {
+          const stream = this.aiService.generateCharacterResponseStream(
+            character,
+            content,
+            conversationHistory
+          )
+
+          for await (const chunk of stream) {
+            fullResponse += chunk
+
+            // 각 청크를 실시간으로 전송 (타자기 효과)
+            this.io.to(roomId).emit('message:stream:chunk', {
+              id: aiMessageId,
+              chunk,
+              characterId,
+              roomId,
+              timestamp: new Date().toISOString(),
+            })
+          }
+
+          // 스트리밍 완료
+          this.io.to(roomId).emit('message:stream:end', {
+            id: aiMessageId,
+            content: fullResponse,
+            senderId: 'system',
+            characterId,
+            characterName: character.name,
+            role: 'assistant',
+            roomId,
+            timestamp: new Date().toISOString(),
+            usage: {
+              estimatedTokens: Math.ceil(fullResponse.length / 4),
+            },
+          })
+
+          logger.info(`AI streaming response completed for character ${characterId} in room ${roomId}`)
+
+        } catch (streamError) {
+          logger.error('AI streaming response failed:', streamError)
+
+          // 스트리밍 오류 전송
+          this.io.to(roomId).emit('message:stream:error', {
+            id: aiMessageId,
+            characterId,
+            roomId,
+            error: 'AI 응답 생성 중 오류가 발생했습니다.',
+            timestamp: new Date().toISOString(),
+          })
+        }
+
+        // AI 타이핑 종료
+        this.io.to(roomId).emit('typing:stop', {
+          userId: 'ai',
+          characterId,
+          roomId,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+    } catch (error) {
+      logger.error('Streaming message send error:', error)
+      socket.emit('error', { message: 'Failed to send streaming message' })
     }
   }
 

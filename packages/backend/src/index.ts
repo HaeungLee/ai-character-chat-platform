@@ -81,6 +81,10 @@ app.post('/api/ai/chat', authenticateToken, aiController.generateCharacterRespon
 app.post('/api/ai/generate', authenticateToken, aiController.generateChatResponse)
 app.get('/api/ai/status', aiController.getServiceStatus)
 
+// 🆕 AI 스트리밍 라우트 (SSE - Server-Sent Events)
+app.post('/api/ai/chat/stream', authenticateToken, aiController.generateCharacterResponseStream)
+app.post('/api/ai/generate/stream', authenticateToken, aiController.generateChatResponseStream)
+
 // 이미지 API 라우트
 app.post('/api/images/generate', authenticateToken, imageController.generateImage)
 app.get('/api/images', authenticateToken, imageController.getImages)

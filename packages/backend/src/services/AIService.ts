@@ -78,6 +78,56 @@ export class AIService {
     }
   }
 
+  // 🆕 캐릭터 기반 스트리밍 응답 생성 (타자기 효과)
+  async *generateCharacterResponseStream(
+    character: Character,
+    userMessage: string,
+    conversationHistory: ChatMessage[] = []
+  ): AsyncGenerator<string, void, unknown> {
+    if (!this.openai) {
+      throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
+    }
+
+    try {
+      const characterPrompt = {
+        name: character.name,
+        personality: character.personality,
+        systemPrompt: character.systemPrompt,
+        temperature: character.temperature || 0.7,
+      }
+
+      const messages: ChatMessage[] = conversationHistory.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }))
+
+      yield* this.openai.generateCharacterResponseStream(
+        characterPrompt,
+        userMessage,
+        messages
+      )
+    } catch (error) {
+      logger.error('캐릭터 스트리밍 응답 생성 실패:', error)
+      throw error
+    }
+  }
+
+  // 🆕 일반 채팅 스트리밍 응답 생성
+  async *generateChatResponseStream(
+    messages: ChatMessage[],
+    options?: {
+      model?: 'openai'
+      temperature?: number
+      maxTokens?: number
+    }
+  ): AsyncGenerator<string, void, unknown> {
+    if (!this.openai) {
+      throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
+    }
+
+    yield* this.openai.generateChatResponseStream(messages, options)
+  }
+
   // 이미지 생성
   async generateImage(
     prompt: string,
