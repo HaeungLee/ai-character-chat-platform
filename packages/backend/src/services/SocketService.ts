@@ -2,6 +2,7 @@
 import { Server, Socket } from 'socket.io'
 import jwt from 'jsonwebtoken'
 import { AIService } from './AIService'
+import { memoryIntegration } from './memory'
 import { logger } from '../utils/logger'
 
 interface ConnectedUser {
@@ -357,6 +358,43 @@ export class SocketService {
         }
 
         const aiMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        const chatId = roomId // roomId를 chatId로 사용
+
+        // 🆕 사용자 메시지 저장 및 메모리 처리
+        try {
+          await memoryIntegration.afterMessageProcess(
+            {
+              id: userMessage.id,
+              chatId,
+              userId,
+              characterId,
+              role: 'user',
+              content
+            },
+            character.name
+          )
+        } catch (memError) {
+          logger.warn('사용자 메시지 메모리 처리 실패:', memError)
+        }
+
+        // 🆕 RAG 컨텍스트 가져오기 (메모리 기반 시스템 프롬프트 보강)
+        let enhancedSystemPrompt = character.systemPrompt
+        try {
+          const ragResult = await memoryIntegration.beforeMessageProcess(
+            userId,
+            characterId,
+            character.name,
+            content,
+            character.systemPrompt
+          )
+          enhancedSystemPrompt = ragResult.systemPrompt
+          
+          if (ragResult.ragContext.totalTokens > 0) {
+            logger.info(`RAG 컨텍스트 주입: ${ragResult.ragContext.totalTokens} 토큰`)
+          }
+        } catch (ragError) {
+          logger.warn('RAG 컨텍스트 가져오기 실패:', ragError)
+        }
 
         // 스트리밍 시작 알림
         this.io.to(roomId).emit('message:stream:start', {
@@ -378,8 +416,14 @@ export class SocketService {
         let fullResponse = ''
 
         try {
+          // 메모리 보강된 캐릭터 객체 생성
+          const enhancedCharacter = {
+            ...character,
+            systemPrompt: enhancedSystemPrompt
+          }
+
           const stream = this.aiService.generateCharacterResponseStream(
-            character,
+            enhancedCharacter,
             content,
             conversationHistory
           )
@@ -411,6 +455,24 @@ export class SocketService {
               estimatedTokens: Math.ceil(fullResponse.length / 4),
             },
           })
+
+          // 🆕 AI 응답 메모리 저장
+          try {
+            await memoryIntegration.afterMessageProcess(
+              {
+                id: aiMessageId,
+                chatId,
+                userId,
+                characterId,
+                role: 'assistant',
+                content: fullResponse,
+                tokens: Math.ceil(fullResponse.length / 3)
+              },
+              character.name
+            )
+          } catch (memError) {
+            logger.warn('AI 응답 메모리 처리 실패:', memError)
+          }
 
           logger.info(`AI streaming response completed for character ${characterId} in room ${roomId}`)
 

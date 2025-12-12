@@ -10,6 +10,31 @@
 -- UUID 확장 활성화
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- pgvector 확장 활성화 (벡터 검색용)
+CREATE EXTENSION IF NOT EXISTS "vector";
+
+-- 메모리 임베딩 테이블 (pgvector)
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  memory_id TEXT NOT NULL,
+  memory_type TEXT NOT NULL CHECK (memory_type IN ('episodic', 'semantic', 'emotional')),
+  embedding vector(1536) NOT NULL,  -- OpenAI ada-002 dimensions
+  text TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  
+  CONSTRAINT unique_memory_embedding UNIQUE (memory_id, memory_type)
+);
+
+-- 벡터 검색 인덱스 (IVFFlat - 대규모 데이터용)
+CREATE INDEX IF NOT EXISTS memory_embeddings_vector_idx 
+ON memory_embeddings 
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+
+-- 기본 인덱스
+CREATE INDEX IF NOT EXISTS memory_embeddings_memory_id_idx ON memory_embeddings(memory_id);
+CREATE INDEX IF NOT EXISTS memory_embeddings_memory_type_idx ON memory_embeddings(memory_type);
+
 -- 기본 사용자 생성 (개발 환경용)
 -- 실제 운영에서는 별도 관리 권장
 DO $$

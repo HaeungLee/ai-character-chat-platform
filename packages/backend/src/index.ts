@@ -9,6 +9,8 @@ import { Server } from 'socket.io'
 import { AuthController } from './controllers/AuthController'
 import { AIController } from './controllers/AIController'
 import { ImageController } from './controllers/ImageController'
+import { memoryController } from './controllers/MemoryController'
+import { startMemoryCleanupJob } from './jobs/memoryCleanup'
 import { authenticateToken } from './middleware/auth'
 import { connectToMongoDB } from './config/mongodb'
 import { createAIServiceFromEnv } from './services/AIService'
@@ -92,6 +94,32 @@ app.get('/api/images/:id', authenticateToken, imageController.getImageById)
 app.delete('/api/images/:id', authenticateToken, imageController.deleteImage)
 app.get('/api/images/models', imageController.getModels)
 
+// 🆕 메모리 API 라우트 (장기 기억 시스템)
+// 메모리 설정
+app.get('/api/memory/:characterId/config', authenticateToken, memoryController.getMemoryConfig)
+app.post('/api/memory/:characterId/capacity', authenticateToken, memoryController.increaseMemoryCapacity)
+
+// 에피소드 메모리
+app.get('/api/memory/:characterId/episodic', authenticateToken, memoryController.getEpisodicMemories)
+app.put('/api/memory/:characterId/episodic/:memoryId', authenticateToken, memoryController.updateEpisodicMemory)
+
+// 의미적 메모리
+app.get('/api/memory/:characterId/semantic', authenticateToken, memoryController.getSemanticMemories)
+app.post('/api/memory/:characterId/semantic', authenticateToken, memoryController.createSemanticMemory)
+
+// 메모리 삭제
+app.delete('/api/memory/:characterId/:type/:memoryId', authenticateToken, memoryController.deleteMemory)
+
+// 요약
+app.get('/api/memory/:characterId/chat/:chatId/context', authenticateToken, memoryController.checkContextUsage)
+app.post('/api/memory/:characterId/chat/:chatId/summarize', authenticateToken, memoryController.triggerSummarization)
+
+// RAG 검색
+app.post('/api/memory/:characterId/search', authenticateToken, memoryController.searchMemories)
+
+// 아카이브 열람
+app.get('/api/memory/:characterId/archives', authenticateToken, memoryController.getSummaryArchives)
+
 // 기본 라우트
 app.get('/health', (req, res) => {
   res.json({
@@ -136,6 +164,10 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`📊 Health check: http://localhost:${PORT}/health`)
   console.log(`📚 API docs: http://localhost:${PORT}/api/docs`)
+  
+  // 메모리 정리 크론 작업 시작
+  startMemoryCleanupJob()
+  console.log(`🧠 Memory cleanup job scheduled`)
 })
 
 // Graceful shutdown

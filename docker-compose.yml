@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 데이터베이스
+  # PostgreSQL 데이터베이스 (pgvector 포함)
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     container_name: ai_chat_postgres
     environment:
       POSTGRES_DB: ai_chat_platform

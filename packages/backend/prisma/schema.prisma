@@ -266,3 +266,212 @@ enum PaymentStatus {
   CANCELLED
   REFUNDED
 }
+
+// =====================================================
+// 장기 기억 시스템 (Vector DB + RAG)
+// =====================================================
+
+// 캐릭터별 메모리 설정
+model CharacterMemoryConfig {
+  id          String   @id @default(cuid())
+  
+  // 관계
+  userId      String
+  characterId String
+  
+  // 메모리 설정
+  maxMemories      Int     @default(30)  // 기본 30개 메모리 제한
+  totalMemories    Int     @default(0)   // 현재 저장된 메모리 수
+  summarizedTokens Int     @default(0)   // 요약에 사용된 토큰 수
+  
+  // 컨텍스트 관리
+  lastContextCheck DateTime?  // 마지막 컨텍스트 체크 시간
+  contextUsagePercent Float @default(0)  // 현재 컨텍스트 사용률
+  
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastAccessAt DateTime @default(now())  // 비활성 계정 체크용
+  
+  // 에피소드 메모리 관계
+  episodicMemories EpisodicMemory[]
+  semanticMemories SemanticMemory[]
+  emotionalMemories EmotionalMemory[]
+  
+  @@unique([userId, characterId])
+  @@index([userId])
+  @@index([characterId])
+  @@index([lastAccessAt])
+  @@map("character_memory_configs")
+}
+
+// 에피소드 기억 (대화 요약)
+model EpisodicMemory {
+  id          String   @id @default(cuid())
+  
+  // 관계
+  configId    String
+  config      CharacterMemoryConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  
+  // 메모리 내용
+  summary     String   // 요약된 대화 내용
+  context     String?  // 추가 컨텍스트
+  
+  // 원본 참조 (MongoDB ObjectId)
+  originalMessageIds String[]  // 원본 메시지 ID들
+  messageRange   Json?   // { startMessageId, endMessageId, startTime, endTime }
+  
+  // 메타데이터
+  importance  Float    @default(0.5)  // 0.0 ~ 1.0 중요도
+  accessCount Int      @default(0)    // 접근 횟수
+  lastAccessed DateTime @default(now())
+  
+  // 벡터 임베딩 (pgvector) - Raw SQL로 처리
+  // embedding vector(1536) - OpenAI ada-002 기준
+  embeddingId String?  // MemoryEmbedding 참조
+  
+  // 사용자 편집
+  isEdited    Boolean  @default(false)
+  editedAt    DateTime?
+  originalSummary String?  // 편집 전 원본
+  
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?  // 만료 시간 (중요도 기반)
+  
+  @@index([configId])
+  @@index([importance])
+  @@index([lastAccessed])
+  @@index([expiresAt])
+  @@map("episodic_memories")
+}
+
+// 의미적 기억 (사실, 관계, 선호도)
+model SemanticMemory {
+  id          String   @id @default(cuid())
+  
+  // 관계
+  configId    String
+  config      CharacterMemoryConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  
+  // 메모리 분류
+  category    SemanticCategory
+  
+  // 내용
+  key         String   // 예: "생일", "좋아하는 음식"
+  value       String   // 예: "3월 15일", "파스타"
+  context     String?  // 추가 컨텍스트
+  
+  // 확신도
+  confidence  Float    @default(0.8)  // 0.0 ~ 1.0
+  
+  // 메타데이터
+  sourceMessageId String?  // 원본 메시지 ID
+  importance  Float    @default(0.7)
+  accessCount Int      @default(0)
+  lastAccessed DateTime @default(now())
+  
+  // 벡터 임베딩
+  embeddingId String?
+  
+  // 사용자 편집
+  isEdited    Boolean  @default(false)
+  editedAt    DateTime?
+  
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([configId])
+  @@index([category])
+  @@index([key])
+  @@index([importance])
+  @@map("semantic_memories")
+}
+
+// 감정 기억
+model EmotionalMemory {
+  id          String   @id @default(cuid())
+  
+  // 관계
+  configId    String
+  config      CharacterMemoryConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  
+  // 감정 정보
+  emotion     String   // 예: "happy", "sad", "excited"
+  intensity   Float    @default(0.5)  // 0.0 ~ 1.0 강도
+  trigger     String   // 감정 유발 요인
+  context     String?  // 상황 설명
+  
+  // 원본 참조
+  sourceMessageId String?
+  
+  // 메타데이터
+  importance  Float    @default(0.6)
+  accessCount Int      @default(0)
+  lastAccessed DateTime @default(now())
+  
+  // 벡터 임베딩
+  embeddingId String?
+  
+  // 타임스탬프
+  createdAt   DateTime @default(now())
+  
+  @@index([configId])
+  @@index([emotion])
+  @@index([importance])
+  @@map("emotional_memories")
+}
+
+// 의미적 기억 카테고리
+enum SemanticCategory {
+  PERSONAL_INFO    // 개인 정보 (이름, 생일 등)
+  PREFERENCE       // 선호도 (좋아하는 것, 싫어하는 것)
+  RELATIONSHIP     // 관계 정보
+  EVENT            // 중요 이벤트
+  OPINION          // 의견/생각
+  HABIT            // 습관
+  GOAL             // 목표/계획
+  OTHER            // 기타
+}
+
+// 요약 작업 큐
+model SummarizationJob {
+  id          String   @id @default(cuid())
+  
+  // 작업 대상
+  userId      String
+  characterId String
+  chatId      String
+  
+  // 요약 범위
+  startMessageId String
+  endMessageId   String
+  messageCount   Int
+  
+  // 작업 상태
+  status      JobStatus @default(PENDING)
+  priority    Int       @default(0)  // 높을수록 우선
+  
+  // 결과
+  result      Json?     // 요약 결과
+  error       String?   // 에러 메시지
+  
+  // 타임스탬프
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  
+  @@index([status])
+  @@index([priority])
+  @@index([userId, characterId])
+  @@map("summarization_jobs")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
