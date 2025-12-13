@@ -22,11 +22,22 @@ export interface CharacterPrompt {
   temperature?: number
 }
 
+// 🆕 사용량 정보
+export interface UsageInfo {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  model: string
+}
+
 export class OpenAIService {
   private client: OpenAI
   private defaultModel: string
   private defaultTemperature: number
   private defaultMaxTokens: number
+  
+  // 🆕 마지막 요청의 사용량 정보
+  private _lastUsage: UsageInfo | null = null
 
   constructor(config: OpenAIConfig) {
     this.client = new OpenAI({
@@ -37,6 +48,16 @@ export class OpenAIService {
     this.defaultModel = config.model || 'gpt-4'
     this.defaultTemperature = config.temperature || 0.7
     this.defaultMaxTokens = config.maxTokens || 1000
+  }
+
+  // 🆕 마지막 사용량 조회
+  get lastUsage(): UsageInfo | null {
+    return this._lastUsage
+  }
+
+  // 🆕 사용량 초기화
+  clearLastUsage(): void {
+    this._lastUsage = null
   }
 
   // 캐릭터 기반 채팅 응답 생성
@@ -66,6 +87,16 @@ export class OpenAIService {
         presence_penalty: 0.6,
         frequency_penalty: 0.5,
       })
+
+      // 🆕 사용량 저장
+      if (response.usage) {
+        this._lastUsage = {
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+          model: response.model,
+        }
+      }
 
       const aiResponse = response.choices[0]?.message?.content
       if (!aiResponse) {
@@ -166,6 +197,16 @@ export class OpenAIService {
         temperature: options?.temperature || this.defaultTemperature,
         max_tokens: options?.maxTokens || this.defaultMaxTokens,
       })
+
+      // 🆕 사용량 저장
+      if (response.usage) {
+        this._lastUsage = {
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+          model: response.model,
+        }
+      }
 
       const aiResponse = response.choices[0]?.message?.content
       if (!aiResponse) {

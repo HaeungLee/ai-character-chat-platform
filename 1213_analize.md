@@ -162,7 +162,7 @@ const provider = options.nsfwMode ? 'openrouter' : 'openai'
 - `ConnectionStatus` 컴포넌트: 연결 상태 UI
 - `MessageStatusIndicator`: sent/failed 상태 표시
 
-### 5.2 AI 서비스 통합 (대부분 구현)
+### 5.2 AI 서비스 통합 ✅ 구현 완료
 
 **구현된 점:**
 - OpenAI, Replicate, Stability 멀티 서비스 지원
@@ -171,11 +171,12 @@ const provider = options.nsfwMode ? 'openrouter' : 'openai'
 - 이미지 생성 기능
 - **스트리밍 응답** - SSE + Socket.IO
 - Provider 선택 API - OpenAI/OpenRouter 라우팅
+- **사용량 추적 시스템** - AIUsageLog 테이블
+- **비용 계산** - Provider/모델별 자동 계산
+- **관리자 대시보드 API** - 통계, 가격 정책 관리
 
-**부족한 점:**
-- 토큰 사용량 추적 개선 필요
-- 비용 계산 로직 없음
-- 응답 캐싱 미구현
+**향후 개선:**
+- 응답 캐싱 (선택적)
 
 ### 5.3 프론트엔드 UI
 

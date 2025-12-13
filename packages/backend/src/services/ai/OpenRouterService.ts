@@ -138,9 +138,20 @@ export type OpenRouterModel =
   | keyof typeof OPENROUTER_MODELS.ROLEPLAY
   | keyof typeof OPENROUTER_MODELS.PREMIUM
 
+// 🆕 사용량 정보
+export interface UsageInfo {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  model: string
+}
+
 export class OpenRouterService {
   private client: OpenAI
   private config: OpenRouterConfig
+  
+  // 🆕 마지막 요청의 사용량 정보
+  private _lastUsage: UsageInfo | null = null
 
   constructor(config: OpenRouterConfig) {
     this.config = config
@@ -154,6 +165,16 @@ export class OpenRouterService {
         'X-Title': config.siteName || 'AI Character Chat Platform'
       }
     })
+  }
+
+  // 🆕 마지막 사용량 조회
+  get lastUsage(): UsageInfo | null {
+    return this._lastUsage
+  }
+
+  // 🆕 사용량 초기화
+  clearLastUsage(): void {
+    this._lastUsage = null
   }
 
   /**
@@ -179,6 +200,16 @@ export class OpenRouterService {
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? 1000
       })
+
+      // 🆕 사용량 저장
+      if (response.usage) {
+        this._lastUsage = {
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+          model: response.model,
+        }
+      }
 
       const content = response.choices[0]?.message?.content
       if (!content) {

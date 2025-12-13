@@ -9,12 +9,15 @@ import { Server } from 'socket.io'
 import { AuthController } from './controllers/AuthController'
 import { AIController } from './controllers/AIController'
 import { ImageController } from './controllers/ImageController'
+import { AdminController } from './controllers/AdminController'
 import { memoryController } from './controllers/MemoryController'
 import { startMemoryCleanupJob } from './jobs/memoryCleanup'
-import { authenticateToken } from './middleware/auth'
+import { authenticateToken, requireAdmin } from './middleware/auth'
 import { connectToMongoDB } from './config/mongodb'
 import { createAIServiceFromEnv } from './services/AIService'
 import { SocketService } from './services/SocketService'
+import { getUsageTrackingService } from './services/billing'
+import { prisma } from './config/database'
 import { logger } from './utils/logger'
 
 // 환경 변수 로드
@@ -47,6 +50,11 @@ const socketService = new SocketService(io, aiService)
 // 컨트롤러 초기화
 const aiController = new AIController(aiService)
 const imageController = new ImageController(aiService)
+const adminController = new AdminController(prisma)
+
+// UsageTracker를 AIService에 주입
+const usageTracker = getUsageTrackingService(prisma)
+aiService.setUsageTracker(usageTracker)
 
 // 미들웨어 설정
 app.use(helmet())
@@ -123,6 +131,20 @@ app.post('/api/memory/:characterId/search', authenticateToken, memoryController.
 
 // 아카이브 열람
 app.get('/api/memory/:characterId/archives', authenticateToken, memoryController.getSummaryArchives)
+
+// 🆕 관리자 API 라우트
+// 대시보드
+app.get('/api/admin/dashboard/usage', authenticateToken, requireAdmin, adminController.getDashboardStats)
+app.get('/api/admin/users/:userId/usage', authenticateToken, requireAdmin, adminController.getUserUsage)
+app.get('/api/admin/usage/logs', authenticateToken, requireAdmin, adminController.getUsageLogs)
+
+// 가격 정책
+app.get('/api/admin/pricing', authenticateToken, requireAdmin, adminController.getAllPricing)
+app.put('/api/admin/pricing/:provider/:model', authenticateToken, requireAdmin, adminController.updatePricing)
+
+// 시스템 상태
+app.get('/api/admin/system/status', authenticateToken, requireAdmin, adminController.getSystemStatus)
+app.get('/api/admin/providers/status', authenticateToken, requireAdmin, adminController.getProvidersStatus)
 
 // 기본 라우트
 app.get('/health', (req, res) => {

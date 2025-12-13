@@ -39,6 +39,9 @@ model User {
   // 이미지 생성 기록
   imageGenerations ImageGeneration[]
 
+  // AI 사용량 로그
+  aiUsageLogs AIUsageLog[]
+
   // 타임스탬프
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -474,4 +477,117 @@ enum JobStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+// =====================================================
+// AI 사용량 추적 시스템
+// =====================================================
+
+/// AI API 사용량 로그 (모든 Provider 통합)
+model AIUsageLog {
+  id                String   @id @default(cuid())
+  
+  // 사용자 정보
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Provider 정보
+  provider          String   // 'openai' | 'openrouter' | 'replicate' | 'stability'
+  model             String   // 'gpt-4o' | 'claude-3-sonnet' | 'gemini-pro' 등
+  
+  // 토큰 사용량
+  promptTokens      Int      @default(0)
+  completionTokens  Int      @default(0)
+  totalTokens       Int      @default(0)
+  
+  // 비용 (USD, 소수점 6자리)
+  costUsd           Decimal  @db.Decimal(10, 6)
+  
+  // 요청 정보
+  requestType       String   // 'chat' | 'chat_stream' | 'image' | 'embedding' | 'summarization'
+  characterId       String?
+  chatId            String?
+  
+  // 성능 메트릭
+  latencyMs         Int?     // 응답 시간 (밀리초)
+  
+  // 상태
+  isSuccess         Boolean  @default(true)
+  errorMessage      String?
+  
+  createdAt         DateTime @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([provider, createdAt])
+  @@index([model, createdAt])
+  @@index([requestType, createdAt])
+  @@index([createdAt])
+  @@map("ai_usage_logs")
+}
+
+/// Provider별 가격 설정 (관리자가 업데이트 가능)
+model AIProviderPricing {
+  id                  String   @id @default(cuid())
+  
+  provider            String   // 'openai' | 'openrouter' | 'anthropic' | 'google'
+  model               String   // 모델 ID
+  displayName         String?  // 표시 이름
+  
+  // 1K 토큰당 가격 (USD)
+  inputPricePerK      Decimal  @db.Decimal(10, 6)
+  outputPricePerK     Decimal  @db.Decimal(10, 6)
+  
+  // 이미지 생성 가격 (있는 경우)
+  imagePricePerUnit   Decimal? @db.Decimal(10, 6)
+  
+  // 컨텍스트 정보
+  contextWindow       Int?     // 최대 토큰 수
+  
+  // 상태
+  isActive            Boolean  @default(true)
+  isDefault           Boolean  @default(false) // 기본 모델 여부
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@unique([provider, model])
+  @@index([provider, isActive])
+  @@map("ai_provider_pricing")
+}
+
+/// 일일/월별 사용량 집계 (대시보드 성능 최적화)
+model AIUsageSummary {
+  id                String   @id @default(cuid())
+  
+  // 집계 기간
+  periodType        String   // 'daily' | 'monthly'
+  periodStart       DateTime // 기간 시작일 (일별: 00:00, 월별: 1일 00:00)
+  
+  // Provider별 집계 (NULL이면 전체)
+  provider          String?
+  
+  // 집계 데이터
+  totalRequests     Int      @default(0)
+  successRequests   Int      @default(0)
+  failedRequests    Int      @default(0)
+  
+  totalPromptTokens     Int      @default(0)
+  totalCompletionTokens Int      @default(0)
+  totalTokens           Int      @default(0)
+  
+  totalCostUsd      Decimal  @db.Decimal(12, 6) @default(0)
+  
+  // 사용자 통계
+  uniqueUsers       Int      @default(0)
+  
+  // 평균 메트릭
+  avgLatencyMs      Int?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@unique([periodType, periodStart, provider])
+  @@index([periodStart])
+  @@index([periodType, periodStart])
+  @@map("ai_usage_summaries")
 }

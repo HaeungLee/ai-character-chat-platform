@@ -3,6 +3,7 @@ import { OpenAIService, OpenAIConfig } from './ai/OpenAIService'
 import { OpenRouterService, OpenRouterConfig, OPENROUTER_MODELS } from './ai/OpenRouterService'
 import { ReplicateService, ReplicateConfig } from './ai/ReplicateService'
 import { StabilityAIService, StabilityConfig } from './ai/StabilityAIService'
+import { UsageTrackingService, UsageRecord, AIProvider as BillingAIProvider } from './billing'
 import { logger } from '../utils/logger'
 
 export interface AIServiceConfig {
@@ -10,6 +11,7 @@ export interface AIServiceConfig {
   openrouter?: OpenRouterConfig
   replicate?: ReplicateConfig
   stability?: StabilityConfig
+  usageTracker?: UsageTrackingService
 }
 
 // AI 프로바이더 타입
@@ -44,6 +46,7 @@ export class AIService {
   private openrouter?: OpenRouterService
   private replicate?: ReplicateService
   private stability?: StabilityAIService
+  private usageTracker?: UsageTrackingService
   private defaultProvider: AIProvider = 'openai'
 
   constructor(config: AIServiceConfig) {
@@ -59,6 +62,9 @@ export class AIService {
     if (config.stability) {
       this.stability = new StabilityAIService(config.stability)
     }
+    if (config.usageTracker) {
+      this.usageTracker = config.usageTracker
+    }
 
     // 기본 프로바이더 설정 (OpenAI 우선, 없으면 OpenRouter)
     if (this.openai) {
@@ -73,6 +79,60 @@ export class AIService {
    */
   getDefaultProvider(): AIProvider {
     return this.defaultProvider
+  }
+
+  /**
+   * UsageTracker 설정 (나중에 주입 가능)
+   */
+  setUsageTracker(tracker: UsageTrackingService): void {
+    this.usageTracker = tracker
+  }
+
+  /**
+   * 🆕 사용량 기록 헬퍼
+   */
+  private async recordUsage(
+    provider: AIProvider,
+    requestType: 'chat' | 'chat_stream' | 'embedding' | 'summarization',
+    options?: {
+      userId?: string
+      characterId?: string
+      chatId?: string
+      latencyMs?: number
+      isSuccess?: boolean
+      errorMessage?: string
+    }
+  ): Promise<void> {
+    if (!this.usageTracker) return
+
+    try {
+      let usage: { promptTokens: number; completionTokens: number; model: string } | null = null
+
+      if (provider === 'openai' && this.openai?.lastUsage) {
+        usage = this.openai.lastUsage
+      } else if (provider === 'openrouter' && this.openrouter?.lastUsage) {
+        usage = this.openrouter.lastUsage
+      }
+
+      if (usage && options?.userId) {
+        await this.usageTracker.recordUsage({
+          userId: options.userId,
+          provider: provider as BillingAIProvider,
+          model: usage.model,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          requestType,
+          characterId: options.characterId,
+          chatId: options.chatId,
+          latencyMs: options.latencyMs,
+          isSuccess: options.isSuccess ?? true,
+          errorMessage: options.errorMessage,
+        })
+      }
+    } catch (error) {
+      logger.warn('사용량 기록 실패:', error)
+      // 사용량 기록 실패는 메인 로직에 영향 주지 않음
+    }
   }
 
   /**
