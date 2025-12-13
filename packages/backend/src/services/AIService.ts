@@ -1,13 +1,27 @@
 // 통합 AI 서비스
 import { OpenAIService, OpenAIConfig } from './ai/OpenAIService'
+import { OpenRouterService, OpenRouterConfig, OPENROUTER_MODELS } from './ai/OpenRouterService'
 import { ReplicateService, ReplicateConfig } from './ai/ReplicateService'
 import { StabilityAIService, StabilityConfig } from './ai/StabilityAIService'
 import { logger } from '../utils/logger'
 
 export interface AIServiceConfig {
   openai?: OpenAIConfig
+  openrouter?: OpenRouterConfig
   replicate?: ReplicateConfig
   stability?: StabilityConfig
+}
+
+// AI 프로바이더 타입
+export type AIProvider = 'openai' | 'openrouter'
+
+// 채팅 옵션
+export interface ChatOptions {
+  provider?: AIProvider
+  model?: string
+  temperature?: number
+  maxTokens?: number
+  nsfwMode?: boolean  // 검열 해제 모드
 }
 
 export interface Character {
@@ -27,12 +41,17 @@ export interface ChatMessage {
 
 export class AIService {
   private openai?: OpenAIService
+  private openrouter?: OpenRouterService
   private replicate?: ReplicateService
   private stability?: StabilityAIService
+  private defaultProvider: AIProvider = 'openai'
 
   constructor(config: AIServiceConfig) {
     if (config.openai) {
       this.openai = new OpenAIService(config.openai)
+    }
+    if (config.openrouter) {
+      this.openrouter = new OpenRouterService(config.openrouter)
     }
     if (config.replicate) {
       this.replicate = new ReplicateService(config.replicate)
@@ -40,17 +59,52 @@ export class AIService {
     if (config.stability) {
       this.stability = new StabilityAIService(config.stability)
     }
+
+    // 기본 프로바이더 설정 (OpenAI 우선, 없으면 OpenRouter)
+    if (this.openai) {
+      this.defaultProvider = 'openai'
+    } else if (this.openrouter) {
+      this.defaultProvider = 'openrouter'
+    }
+  }
+
+  /**
+   * 현재 사용 가능한 프로바이더 조회
+   */
+  getDefaultProvider(): AIProvider {
+    return this.defaultProvider
+  }
+
+  /**
+   * 프로바이더 선택 로직
+   * - nsfwMode: OpenRouter 강제
+   * - 명시적 provider 지정: 해당 프로바이더 사용
+   * - 기본: defaultProvider 사용
+   */
+  private selectProvider(options?: ChatOptions): AIProvider {
+    if (options?.nsfwMode) {
+      // NSFW 모드는 OpenRouter 필수
+      if (!this.openrouter) {
+        throw new Error('NSFW 모드를 사용하려면 OpenRouter API 키가 필요합니다.')
+      }
+      return 'openrouter'
+    }
+
+    if (options?.provider) {
+      return options.provider
+    }
+
+    return this.defaultProvider
   }
 
   // 캐릭터 기반 채팅 응답 생성
   async generateCharacterResponse(
     character: Character,
     userMessage: string,
-    conversationHistory: ChatMessage[] = []
+    conversationHistory: ChatMessage[] = [],
+    options?: ChatOptions
   ): Promise<string> {
-    if (!this.openai) {
-      throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
-    }
+    const provider = this.selectProvider(options)
 
     try {
       const characterPrompt = {
@@ -65,15 +119,56 @@ export class AIService {
         content: msg.content,
       }))
 
-      return await this.openai.generateCharacterResponse(
-        characterPrompt,
-        userMessage,
-        messages
-      )
+      if (provider === 'openrouter') {
+        if (!this.openrouter) {
+          throw new Error('OpenRouter 서비스가 설정되지 않았습니다.')
+        }
+        return await this.openrouter.generateCharacterResponse(
+          characterPrompt,
+          userMessage,
+          messages,
+          {
+            model: options?.model,
+            nsfwMode: options?.nsfwMode
+          }
+        )
+      } else {
+        if (!this.openai) {
+          throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
+        }
+        return await this.openai.generateCharacterResponse(
+          characterPrompt,
+          userMessage,
+          messages
+        )
+      }
     } catch (error) {
       logger.error('캐릭터 응답 생성 실패:', error)
 
-      // Fallback 응답
+      // Fallback: 다른 프로바이더로 시도
+      if (provider === 'openai' && this.openrouter) {
+        logger.info('OpenRouter로 폴백 시도')
+        try {
+          const characterPrompt = {
+            name: character.name,
+            personality: character.personality,
+            systemPrompt: character.systemPrompt,
+            temperature: character.temperature || 0.7,
+          }
+          const messages = conversationHistory.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+          }))
+          return await this.openrouter.generateCharacterResponse(
+            characterPrompt,
+            userMessage,
+            messages
+          )
+        } catch (fallbackError) {
+          logger.error('폴백도 실패:', fallbackError)
+        }
+      }
+
       return `${character.name}: 죄송합니다. 지금은 응답을 생성할 수 없습니다. 잠시 후 다시 시도해주세요.`
     }
   }
@@ -82,11 +177,10 @@ export class AIService {
   async *generateCharacterResponseStream(
     character: Character,
     userMessage: string,
-    conversationHistory: ChatMessage[] = []
+    conversationHistory: ChatMessage[] = [],
+    options?: ChatOptions
   ): AsyncGenerator<string, void, unknown> {
-    if (!this.openai) {
-      throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
-    }
+    const provider = this.selectProvider(options)
 
     try {
       const characterPrompt = {
@@ -101,11 +195,29 @@ export class AIService {
         content: msg.content,
       }))
 
-      yield* this.openai.generateCharacterResponseStream(
-        characterPrompt,
-        userMessage,
-        messages
-      )
+      if (provider === 'openrouter') {
+        if (!this.openrouter) {
+          throw new Error('OpenRouter 서비스가 설정되지 않았습니다.')
+        }
+        yield* this.openrouter.generateCharacterResponseStream(
+          characterPrompt,
+          userMessage,
+          messages,
+          {
+            model: options?.model,
+            nsfwMode: options?.nsfwMode
+          }
+        )
+      } else {
+        if (!this.openai) {
+          throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
+        }
+        yield* this.openai.generateCharacterResponseStream(
+          characterPrompt,
+          userMessage,
+          messages
+        )
+      }
     } catch (error) {
       logger.error('캐릭터 스트리밍 응답 생성 실패:', error)
       throw error
@@ -115,17 +227,21 @@ export class AIService {
   // 🆕 일반 채팅 스트리밍 응답 생성
   async *generateChatResponseStream(
     messages: ChatMessage[],
-    options?: {
-      model?: 'openai'
-      temperature?: number
-      maxTokens?: number
-    }
+    options?: ChatOptions
   ): AsyncGenerator<string, void, unknown> {
-    if (!this.openai) {
-      throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
-    }
+    const provider = this.selectProvider(options)
 
-    yield* this.openai.generateChatResponseStream(messages, options)
+    if (provider === 'openrouter') {
+      if (!this.openrouter) {
+        throw new Error('OpenRouter 서비스가 설정되지 않았습니다.')
+      }
+      yield* this.openrouter.generateChatResponseStream(messages, options)
+    } else {
+      if (!this.openai) {
+        throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
+      }
+      yield* this.openai.generateChatResponseStream(messages, options)
+    }
   }
 
   // 이미지 생성
@@ -212,30 +328,55 @@ export class AIService {
   // 서비스 상태 확인
   getServiceStatus(): {
     openai: boolean
+    openrouter: boolean
     replicate: boolean
     stability: boolean
+    defaultProvider: AIProvider
   } {
     return {
       openai: !!this.openai,
+      openrouter: !!this.openrouter,
       replicate: !!this.replicate,
       stability: !!this.stability,
+      defaultProvider: this.defaultProvider,
     }
   }
 
   // 사용 가능한 모델 목록
   getAvailableModels(): {
     chat: string[]
+    chatUncensored: string[]
+    chatRoleplay: string[]
+    chatFree: string[]
     image: string[]
   } {
     const status = this.getServiceStatus()
 
+    const openrouterModels = this.openrouter?.getAvailableModels()
+
     return {
-      chat: status.openai ? ['gpt-4', 'gpt-3.5-turbo'] : [],
+      chat: [
+        ...(status.openai ? ['gpt-4', 'gpt-4o', 'gpt-3.5-turbo'] : []),
+        ...(status.openrouter ? (openrouterModels?.premium || []) : []),
+      ],
+      chatUncensored: status.openrouter ? (openrouterModels?.uncensored || []) : [],
+      chatRoleplay: status.openrouter ? (openrouterModels?.roleplay || []) : [],
+      chatFree: status.openrouter ? (openrouterModels?.free || []) : [],
       image: [
         ...(status.openai ? ['openai/dall-e-3'] : []),
         ...(status.replicate ? ['replicate/sdxl', 'replicate/sdxl-turbo'] : []),
         ...(status.stability ? ['stability/sdxl', 'stability/core'] : []),
       ],
+    }
+  }
+
+  // OpenRouter 크레딧 조회
+  async getOpenRouterCredits(): Promise<{ usage: number; limit: number | null } | null> {
+    if (!this.openrouter) return null
+    try {
+      return await this.openrouter.getCredits()
+    } catch {
+      return null
     }
   }
 
@@ -290,9 +431,18 @@ export function createAIServiceFromEnv(): AIService {
     config.openai = {
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORGANIZATION_ID,
-      model: 'gpt-4',
-      temperature: 0.7,
-      maxTokens: 1000,
+      model: process.env.OPENAI_MODEL || 'gpt-4o',
+      temperature: parseFloat(process.env.OPENAI_TEMPERATURE || '0.7'),
+      maxTokens: parseInt(process.env.OPENAI_MAX_TOKENS || '1000'),
+    }
+  }
+
+  if (process.env.OPENROUTER_API_KEY) {
+    config.openrouter = {
+      apiKey: process.env.OPENROUTER_API_KEY,
+      siteUrl: process.env.OPENROUTER_SITE_URL || process.env.CORS_ORIGIN,
+      siteName: process.env.OPENROUTER_SITE_NAME || 'AI Character Chat Platform',
+      defaultModel: process.env.OPENROUTER_DEFAULT_MODEL || 'meta-llama/llama-3.2-3b-instruct:free',
     }
   }
 
@@ -307,6 +457,15 @@ export function createAIServiceFromEnv(): AIService {
       apiKey: process.env.STABILITY_API_KEY,
     }
   }
+
+  // 설정 로그
+  const enabledServices = []
+  if (config.openai) enabledServices.push('OpenAI')
+  if (config.openrouter) enabledServices.push('OpenRouter')
+  if (config.replicate) enabledServices.push('Replicate')
+  if (config.stability) enabledServices.push('Stability')
+  
+  console.log(`🤖 AI Services enabled: ${enabledServices.join(', ') || 'None'}`)
 
   return new AIService(config)
 }

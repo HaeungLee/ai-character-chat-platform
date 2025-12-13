@@ -87,6 +87,10 @@ app.get('/api/ai/status', aiController.getServiceStatus)
 app.post('/api/ai/chat/stream', authenticateToken, aiController.generateCharacterResponseStream)
 app.post('/api/ai/generate/stream', authenticateToken, aiController.generateChatResponseStream)
 
+// 🆕 프로바이더 지정 AI 라우트 (OpenRouter 포함)
+app.post('/api/ai/chat/provider', authenticateToken, aiController.generateChatWithProvider)
+app.post('/api/ai/chat/provider/stream', authenticateToken, aiController.generateChatStreamWithProvider)
+
 // 이미지 API 라우트
 app.post('/api/images/generate', authenticateToken, imageController.generateImage)
 app.get('/api/images', authenticateToken, imageController.getImages)
