@@ -79,125 +79,102 @@ ai-character-chat-platform/
 
 ---
 
-## 🔴 4. 중대한 누락 사항 (Critical Missing Features)
+## 🟢 4. 핵심 기능 구현 완료
 
-### 4.1 🚨 스트리밍 응답 미구현 (최우선)
+### 4.1 ✅ 스트리밍 응답 구현 완료
 
-**현재 상태:**
-- OpenAIService에서 `chat.completions.create()` 사용
-- 전체 응답을 한 번에 반환하는 방식
+**구현된 기능:**
+- `OpenAIService.generateChatCompletionStream()` - AsyncGenerator 기반 스트리밍
+- `AIService.generateCharacterResponseStream()` - 캐릭터 응답 스트리밍
+- SSE 엔드포인트: `POST /api/ai/chat/stream`
+- Socket.IO 스트리밍: `message:stream:start`, `message:stream:chunk`, `message:stream:end`
 
-**Zeta 요구사항:**
-```text
-"사용자가 AI의 답변 완성을 기다리지 않게 하려면 타자기 효과처럼 
-글자가 생성되는 대로 화면에 뿌려줘야 합니다."
-```
-
-**필요한 구현:**
-```typescript
-// 현재 코드 (문제)
-const response = await this.client.chat.completions.create({...})
-
-// 필요한 코드 (스트리밍)
-const stream = await this.client.chat.completions.create({
-  ...options,
-  stream: true,
-})
-
-for await (const chunk of stream) {
-  const content = chunk.choices[0]?.delta?.content || ''
-  // SSE로 클라이언트에 전송
-}
-```
-
-**영향도:** ⭐⭐⭐⭐⭐ (사용자 경험의 핵심)
+**프론트엔드:**
+- `useStreamingChat` 훅 - SSE 기반 스트리밍
+- `useSocketChat` 훅 - Socket.IO 기반 스트리밍
+- 타자기 효과 CSS 커서 애니메이션
 
 ---
 
-### 4.2 🚨 Vector DB / 장기 기억 미구현
+### 4.2 ✅ Vector DB / 장기 기억 구현 완료
 
-**현재 상태:**
-- 대화 기록은 MongoDB에 저장
-- 의미 기반 검색(Semantic Search) 불가
+**구현된 기능:**
+- **pgvector** 확장 (PostgreSQL) - 1536차원 벡터 저장
+- **다층 메모리 아키텍처:**
+  - Episodic Memory (에피소드 기억)
+  - Semantic Memory (의미 기억)
+  - Emotional Memory (감정 기억)
+- **하이브리드 요약:** 컨텍스트 70% 도달 시 비동기 요약
+- **RAG 시스템:** 관련 기억 검색 → 프롬프트 주입
 
-**Zeta 요구사항:**
-```text
-"우리가 지난번에 놀이공원 갔던 거 기억나?" 같은 질문에 답하려면,
-과거 대화를 벡터(임베딩)로 변환해 저장해두고 유사도를 검색해야 합니다(RAG 기술)."
-```
+**서비스:**
+- `EmbeddingService` - OpenAI 임베딩 생성
+- `MemoryService` - CRUD 및 검색
+- `SummarizationService` - GPT 기반 대화 요약
+- `RAGService` - 검색 및 프롬프트 주입
+- `MemoryIntegration` - 메시지 처리 통합
 
-**필요한 구현:**
-1. Vector DB 선택 (pgvector 권장 - PostgreSQL 이미 사용 중)
-2. 대화 임베딩 생성 (OpenAI Embeddings API)
-3. 대화 요약 및 저장 로직
-4. 프롬프트에 관련 기억 주입
-
-**영향도:** ⭐⭐⭐⭐⭐ (캐릭터 몰입감의 핵심)
+**상세 설계:** `1213_VectorDB.md` 참조
 
 ---
 
-### 4.3 🚨 검열 해제 모델 미지원
+### 4.3 ✅ OpenRouter 검열 해제 모델 지원
 
-**현재 상태:**
-- OpenAI GPT-4만 사용
-- 성인 콘텐츠 생성 불가 (검열됨)
+**구현된 기능:**
+- `OpenRouterService` - OpenRouter API 통합
+- 하이브리드 구조: OpenAI + OpenRouter 동시 사용
+- Provider 선택 API: `POST /api/ai/chat/provider`
 
-**Zeta 요구사항:**
-```text
-"OpenRouter를 통해 MythoMax, Dolphin 같은 검열 해제 모델 사용"
-"Llama-3-Abliterated + LoRA 조합이 현재 업계 표준"
-```
+**사용 가능 모델 (무료/저렴):**
+- `meta-llama/llama-3.3-70b-instruct:free`
+- `google/gemini-2.0-flash-exp:free`
+- `mistralai/mistral-7b-instruct:free`
+- `cognitivecomputations/dolphin-mixtral-8x22b` (검열 해제)
 
-**필요한 구현:**
+**AIService 라우팅:**
 ```typescript
-// 모드별 모델 분기 처리
-if (isNsfwMode) {
-  // OpenRouter API로 Dolphin/MythoMax 호출
-  response = await openrouter.chat.completions.create({
-    model: "cognitivecomputations/dolphin-mistral-24b",
-    messages: [...]
-  })
-} else {
-  // 일반 모드: GPT-4
-  response = await openai.chat.completions.create({...})
-}
+// nsfwMode 또는 preferCost 시 OpenRouter 사용
+const provider = options.nsfwMode ? 'openrouter' : 'openai'
 ```
 
-**필요 사항:**
-1. OpenRouter API 연동
-2. 성인 인증 시스템 (PortOne/KCP 등)
-3. 콘텐츠 경고 및 동의 UI
-
-**영향도:** ⭐⭐⭐⭐⭐ (Zeta 서비스의 차별점)
+**향후 계획:** `1212_LoRA.md` - Abliteration/LoRA 커스텀 모델 구축 가이드
 
 ---
 
 ## 🟡 5. 부분 구현 항목 (개선 필요)
 
-### 5.1 Socket.IO 실시간 채팅
+### 5.1 Socket.IO 실시간 채팅 ✅ 구현 완료
 
-**잘된 점:**
+**구현된 점:**
 - JWT 기반 인증 미들웨어
-- 방(Room) 참여/나가기 로직
+- 방(Room) 참여/나가기/재참여 로직
 - 타이핑 표시기 이벤트
+- 대화 기록 MongoDB 저장
+- AI 응답 스트리밍 지원 (타자기 효과)
+- 재연결 로직 (5분 세션 타임아웃)
+- 메시지 전송 확인(ACK) - 5초 타임아웃, 2회 재시도
+- 동일 사용자 중복 연결 방지
+- 하트비트 연결 상태 확인
 
-**부족한 점:**
-- 대화 기록 DB 저장 미구현
-- AI 응답 스트리밍 미지원
-- 재연결 로직 불안정
-- 메시지 전송 확인(ACK) 없음
+**프론트엔드:**
+- `useSocket` 훅: 연결/재연결 관리
+- `useSocketChat` 훅: 메시지 ACK, 스트리밍 처리
+- `ConnectionStatus` 컴포넌트: 연결 상태 UI
+- `MessageStatusIndicator`: sent/failed 상태 표시
 
-### 5.2 AI 서비스 통합
+### 5.2 AI 서비스 통합 (대부분 구현)
 
-**잘된 점:**
+**구현된 점:**
 - OpenAI, Replicate, Stability 멀티 서비스 지원
+- **OpenRouter 통합** - 검열 해제 모델 + 저렴한 대안
 - 폴백(Fallback) 로직 구현
 - 이미지 생성 기능
+- **스트리밍 응답** - SSE + Socket.IO
+- Provider 선택 API - OpenAI/OpenRouter 라우팅
 
 **부족한 점:**
-- 토큰 사용량 추적 미구현
+- 토큰 사용량 추적 개선 필요
 - 비용 계산 로직 없음
-- Rate Limiting 개선 필요
 - 응답 캐싱 미구현
 
 ### 5.3 프론트엔드 UI
