@@ -521,3 +521,4 @@ export function useSocketChat(options: UseSocketChatOptions) {
 
 export type { UseSocketChatOptions, RoomJoinedData, ConversationHistoryItem }
 
+

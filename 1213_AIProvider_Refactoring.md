@@ -380,3 +380,4 @@ model AIUsageLog {
 - `1213_VectorDB.md` - 메모리 시스템 설계
 - `1212_LoRA.md` - 커스텀 모델 계획
 
+

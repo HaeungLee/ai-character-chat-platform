@@ -461,3 +461,4 @@ function ChatPage() {
 - `packages/frontend/src/lib/types/socket.ts` - 이벤트 타입 추가
 - `packages/frontend/src/app/globals.css` - 애니메이션 추가
 
+
