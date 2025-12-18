@@ -83,8 +83,19 @@ services:
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 7d
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_DEFAULT_MODEL: ${OPENAI_DEFAULT_MODEL:-gpt-4o}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-ada-002}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-http://localhost:3000}
+      OPENROUTER_SITE_NAME: ${OPENROUTER_SITE_NAME:-AI Character Chat Platform}
+      ENABLE_NSFW: ${ENABLE_NSFW:-false}
+      NSFW_DEFAULT_MODEL: ${NSFW_DEFAULT_MODEL:-cognitivecomputations/dolphin-mixtral-8x22b}
+      AI_PROVIDER_PRIORITY: ${AI_PROVIDER_PRIORITY:-openrouter,openai}
       REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+      REPLICATE_DEFAULT_MODEL: ${REPLICATE_DEFAULT_MODEL:-black-forest-labs/flux-schnell}
       STABILITY_API_KEY: ${STABILITY_API_KEY:-}
+      STABILITY_DEFAULT_MODEL: ${STABILITY_DEFAULT_MODEL:-stable-diffusion-xl-1024-v1-0}
       CORS_ORIGIN: http://localhost:3000
       LOG_LEVEL: info
       SOCKET_CORS_ORIGIN: http://localhost:3000
