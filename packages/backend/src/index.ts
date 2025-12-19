@@ -1,4 +1,4 @@
-import express from 'express'
+import express, { Request, Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import compression from 'compression'
@@ -36,11 +36,43 @@ const aiService = createAIServiceFromEnv()
 const app = express()
 const server = createServer(app)
 
+// CORS 설정 (개발 환경에서 모든 로컬 네트워크 허용)
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000']
+
+// 개발 환경에서는 로컬 네트워크 모든 IP 허용
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // origin이 없는 경우 (같은 도메인 요청) 허용
+    if (!origin) return callback(null, true)
+
+    // 허용된 origin 목록에 있는 경우
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    // 개발 환경에서 로컬 네트워크 IP 허용 (192.168.x.x, 10.x.x.x 등)
+    if (process.env.NODE_ENV !== 'production') {
+      const isLocalNetwork = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin)
+      if (isLocalNetwork) {
+        return callback(null, true)
+      }
+    }
+
+    callback(new Error('Not allowed by CORS'))
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+}
+
 // Socket.IO 설정
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-    methods: ['GET', 'POST'],
+    origin: corsOptions.origin,
+    methods: corsOptions.methods,
+    credentials: true,
   },
 })
 
@@ -57,8 +89,10 @@ const usageTracker = getUsageTrackingService(prisma)
 aiService.setUsageTracker(usageTracker)
 
 // 미들웨어 설정
-app.use(helmet())
-app.use(cors())
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+}))
+app.use(cors(corsOptions))
 app.use(compression())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
