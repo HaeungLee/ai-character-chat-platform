@@ -62,46 +62,69 @@ export default function CharacterChatPage() {
         const abortController = new AbortController()
         activeStreamAbortRef.current = abortController
 
-        let response: Response
-        try {
-            response = await fetch(`${API_URL}/api/ai/chat/stream`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${args.token}`,
-                },
-                body: JSON.stringify({
-                    characterId: args.characterId,
-                    message: args.message,
-                    conversationHistory: args.conversationHistory,
-                    provider: 'openrouter',
-                }),
-                signal: abortController.signal,
-            })
-        } catch (e) {
-            const err = e as unknown as { name?: string }
-            if (err?.name === 'AbortError') {
+        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+        const MAX_RETRIES = 1
+        const RETRY_DELAY_MS = 400
+
+        let started = false
+        let lastError: unknown = null
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            if (abortController.signal.aborted) {
                 args.onDone?.('')
                 return
             }
-            throw e
-        }
 
-        if (!response.ok) {
-            const text = await response.text().catch(() => '')
-            throw new Error(text || `스트리밍 요청 실패 (${response.status})`)
-        }
+            let emittedAnyChunk = false
+            let response: Response
+            try {
+                response = await fetch(`${API_URL}/api/ai/chat/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${args.token}`,
+                    },
+                    body: JSON.stringify({
+                        characterId: args.characterId,
+                        message: args.message,
+                        conversationHistory: args.conversationHistory,
+                        provider: 'openrouter',
+                    }),
+                    signal: abortController.signal,
+                })
+            } catch (e) {
+                const err = e as unknown as { name?: string }
+                if (err?.name === 'AbortError') {
+                    args.onDone?.('')
+                    return
+                }
+                lastError = e
+                if (attempt < MAX_RETRIES) {
+                    await sleep(RETRY_DELAY_MS)
+                    continue
+                }
+                throw e
+            }
 
-        if (!response.body) {
-            throw new Error('스트리밍 응답을 받을 수 없습니다.')
-        }
+            try {
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '')
+                    throw new Error(text || `스트리밍 요청 실패 (${response.status})`)
+                }
 
-        args.onStart?.()
+                if (!response.body) {
+                    throw new Error('스트리밍 응답을 받을 수 없습니다.')
+                }
 
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder('utf-8')
-        let buffer = ''
-        let full = ''
+                if (!started) {
+                    started = true
+                    args.onStart?.()
+                }
+
+                const reader = response.body.getReader()
+                const decoder = new TextDecoder('utf-8')
+                let buffer = ''
+                let full = ''
 
         const extractEventPayloads = (evtBlock: string): string[] => {
             // Supports multiline `data:` fields per SSE spec.
@@ -116,67 +139,90 @@ export default function CharacterChatPage() {
             return [dataLines.join('\n')]
         }
 
-        try {
-            while (true) {
-                const { value, done } = await reader.read()
-                if (done) break
+                try {
+                    while (true) {
+                        const { value, done } = await reader.read()
+                        if (done) break
 
-                buffer += decoder.decode(value, { stream: true })
-                buffer = buffer.replace(/\r\n/g, '\n')
+                        buffer += decoder.decode(value, { stream: true })
+                        buffer = buffer.replace(/\r\n/g, '\n')
 
-                // SSE event delimiter: blank line
-                const events = buffer.split('\n\n')
-                buffer = events.pop() ?? ''
+                        // SSE event delimiter: blank line
+                        const events = buffer.split('\n\n')
+                        buffer = events.pop() ?? ''
 
-                for (const evt of events) {
-                    const payloads = extractEventPayloads(evt)
-                    for (const payloadRaw of payloads) {
-                        const payload = payloadRaw.trim()
-                        if (!payload) continue
+                        for (const evt of events) {
+                            const payloads = extractEventPayloads(evt)
+                            for (const payloadRaw of payloads) {
+                                const payload = payloadRaw.trim()
+                                if (!payload) continue
 
-                        if (payload === '[DONE]') {
-                            args.onDone?.(full)
-                            return
-                        }
+                                if (payload === '[DONE]') {
+                                    args.onDone?.(full)
+                                    return
+                                }
 
-                        try {
-                            const parsed = JSON.parse(payload)
-                            if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
-                                full += parsed.content
-                                args.onChunk(parsed.content)
-                                continue
-                            }
-                            if (parsed?.type === 'done' && typeof parsed?.fullResponse === 'string') {
-                                args.onDone?.(parsed.fullResponse)
-                                return
-                            }
-                            if (parsed?.type === 'error') {
-                                throw new Error(parsed?.error || '스트리밍 중 오류가 발생했습니다.')
-                            }
-                        } catch (e) {
-                            // Fallback: treat as raw text chunk (some servers send plain text)
-                            if (payload && payload !== '[DONE]') {
-                                full += payload
-                                args.onChunk(payload)
+                                try {
+                                    const parsed = JSON.parse(payload)
+                                    if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
+                                        full += parsed.content
+                                        emittedAnyChunk = true
+                                        args.onChunk(parsed.content)
+                                        continue
+                                    }
+                                    if (parsed?.type === 'done' && typeof parsed?.fullResponse === 'string') {
+                                        args.onDone?.(parsed.fullResponse)
+                                        return
+                                    }
+                                    if (parsed?.type === 'error') {
+                                        throw new Error(parsed?.error || '스트리밍 중 오류가 발생했습니다.')
+                                    }
+                                } catch (e) {
+                                    // Fallback: treat as raw text chunk (some servers send plain text)
+                                    if (payload && payload !== '[DONE]') {
+                                        full += payload
+                                        emittedAnyChunk = true
+                                        args.onChunk(payload)
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
 
-            args.onDone?.(full)
-        } catch (e) {
-            const err = e as unknown as { name?: string }
-            if (err?.name === 'AbortError') {
-                args.onDone?.(full)
-                return
-            }
-            throw e
-        } finally {
-            if (activeStreamAbortRef.current === abortController) {
-                activeStreamAbortRef.current = null
+                    args.onDone?.(full)
+                    return
+                } catch (e) {
+                    const err = e as unknown as { name?: string }
+                    if (err?.name === 'AbortError') {
+                        args.onDone?.(full)
+                        return
+                    }
+
+                    // UX: only auto-retry if we haven't shown any partial output yet.
+                    lastError = e
+                    if (!emittedAnyChunk && attempt < MAX_RETRIES) {
+                        await sleep(RETRY_DELAY_MS)
+                        continue
+                    }
+
+                    throw e
+                }
+            } catch (e) {
+                // Handle per-attempt errors (including non-OK response) with the same retry rule.
+                lastError = e
+                if (abortController.signal.aborted) {
+                    args.onDone?.('')
+                    return
+                }
+                if (attempt < MAX_RETRIES) {
+                    await sleep(RETRY_DELAY_MS)
+                    continue
+                }
+                throw e
             }
         }
+
+        throw lastError ?? new Error('스트리밍 실패')
     }
 
     // Scroll to bottom
