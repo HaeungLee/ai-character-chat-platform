@@ -9,10 +9,16 @@ export interface ApiResponse<T = any> {
   message?: string
 }
 
-export interface ApiError {
+export class ApiError extends Error {
   status: number
-  message: string
   code?: string
+
+  constructor(status: number, message: string, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
 }
 
 export class ApiClient {

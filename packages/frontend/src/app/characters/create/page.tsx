@@ -373,7 +373,7 @@ export default function CreateCharacterPage() {
                   </span>
                 </h3>
                 <p className="text-sm text-[var(--muted-foreground)] mb-4">
-                  특정 단어가 대화에 나오면 AI에게 주입할 기억을 설정합니다. (예: '마법' 단어 → 마법 시스템 설명)
+                  특정 단어가 대화에 나오면 AI에게 주입할 기억을 설정합니다. (예: &apos;마법&apos; 단어 → 마법 시스템 설명)
                 </p>
                 <LorebookManager entries={lorebookEntries} onChange={setLorebookEntries} />
               </div>
@@ -438,7 +438,7 @@ export default function CreateCharacterPage() {
 
                 <div>
                   <h4 className="font-bold text-[var(--muted-foreground)] text-sm uppercase mb-2">첫 인사</h4>
-                  <p className="text-[var(--foreground)] italic">"{greeting}"</p>
+                  <p className="text-[var(--foreground)] italic">&quot;{greeting}&quot;</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
