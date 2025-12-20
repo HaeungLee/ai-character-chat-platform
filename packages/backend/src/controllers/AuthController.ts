@@ -20,9 +20,9 @@ export class AuthController {
       .withMessage('비밀번호는 대소문자, 숫자, 특수문자를 포함해야 합니다'),
     body('username')
       .optional()
-      .isLength({ min: 3, max: 30 })
-      .matches(/^[a-zA-Z0-9_]+$/)
-      .withMessage('사용자명은 3-30자의 영문, 숫자, 밑줄만 사용할 수 있습니다'),
+      .isLength({ min: 2, max: 30 })
+      .matches(/^[a-zA-Z0-9_\u3131-\u318E\uAC00-\uD7A3]+$/)
+      .withMessage('사용자명은 2-30자의 한글, 영문, 숫자, 밑줄만 사용할 수 있습니다'),
   ]
 
   /**

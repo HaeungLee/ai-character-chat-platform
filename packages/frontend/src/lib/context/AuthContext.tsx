@@ -132,14 +132,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await response.json()
 
     if (!response.ok) {
+      // 상세 에러 정보 출력
+      console.error('Registration error:', data)
+
+      // 검증 에러가 있으면 상세 메시지 표시
+      if (data.errors && Array.isArray(data.errors)) {
+        const errorMessages = data.errors.map((err: any) => `${err.field}: ${err.message}`).join('\n')
+        throw new Error(errorMessages || data.message || '회원가입에 실패했습니다.')
+      }
+
       throw new Error(data.message || '회원가입에 실패했습니다.')
     }
 
-    localStorage.setItem('auth_token', data.token)
-    
+    // 백엔드는 tokens 객체로 반환 (accessToken, refreshToken)
+    const accessToken = data.tokens?.accessToken || data.token
+
+    localStorage.setItem('auth_token', accessToken)
+
     setState({
       user: data.user,
-      token: data.token,
+      token: accessToken,
       isLoading: false,
       isAuthenticated: true,
     })

@@ -69,7 +69,9 @@ export default function RegisterPage() {
     setIsLoading(true)
 
     try {
-      await register(email, password, username || undefined)
+      // 사용자명이 빈 문자열이면 undefined로 전송
+      const trimmedUsername = username.trim()
+      await register(email, password, trimmedUsername || undefined)
       router.push('/chat')
     } catch (err) {
       setError(err instanceof Error ? err.message : '회원가입에 실패했습니다.')
@@ -140,12 +142,17 @@ export default function RegisterPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
-                placeholder="닉네임"
-                className="w-full px-4 py-3 rounded-lg bg-[var(--secondary)] border border-[var(--border)] 
+                placeholder="닉네임 (한글, 영문, 숫자 가능)"
+                className="w-full px-4 py-3 rounded-lg bg-[var(--secondary)] border border-[var(--border)]
                   text-[var(--foreground)] placeholder-[var(--muted-foreground)]
                   focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:border-transparent
                   transition-all duration-200"
               />
+              {username && (username.length < 2 || username.length > 30 || !/^[a-zA-Z0-9_\u3131-\u318E\uAC00-\uD7A3]+$/.test(username)) && (
+                <p className="mt-1 text-xs text-yellow-500">
+                  2-30자의 한글, 영문, 숫자, 밑줄(_)만 사용 가능합니다
+                </p>
+              )}
             </div>
 
             {/* 비밀번호 */}
