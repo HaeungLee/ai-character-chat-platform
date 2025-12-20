@@ -18,6 +18,17 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
+  // 비밀번호 요구사항 체크 (백엔드와 동일)
+  const passwordRequirements = {
+    minLength: password.length >= 8,
+    hasUppercase: /[A-Z]/.test(password),
+    hasLowercase: /[a-z]/.test(password),
+    hasNumber: /[0-9]/.test(password),
+    hasSpecialChar: /[!@#$%^&*]/.test(password),
+  }
+
+  const allRequirementsMet = Object.values(passwordRequirements).every(Boolean)
+
   // 비밀번호 강도 체크
   const getPasswordStrength = (pass: string): { strength: number; label: string; color: string } => {
     let strength = 0
@@ -25,7 +36,7 @@ export default function RegisterPage() {
     if (/[A-Z]/.test(pass)) strength++
     if (/[a-z]/.test(pass)) strength++
     if (/[0-9]/.test(pass)) strength++
-    if (/[^A-Za-z0-9]/.test(pass)) strength++
+    if (/[!@#$%^&*]/.test(pass)) strength++
 
     if (strength <= 2) return { strength, label: '약함', color: 'bg-red-500' }
     if (strength <= 3) return { strength, label: '보통', color: 'bg-yellow-500' }
@@ -45,8 +56,8 @@ export default function RegisterPage() {
       return
     }
 
-    if (password.length < 8) {
-      setError('비밀번호는 8자 이상이어야 합니다.')
+    if (!allRequirementsMet) {
+      setError('비밀번호가 모든 요구사항을 충족하지 않습니다.')
       return
     }
 
