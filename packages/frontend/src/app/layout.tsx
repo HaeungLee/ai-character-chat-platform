@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { Providers } from "./providers"
+import { Shell } from "@/components/layout/Shell"
 import "./globals.css"
 
 const geistSans = Geist({
@@ -42,7 +43,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
         <Providers>
-          {children}
+          <Shell>
+            {children}
+          </Shell>
         </Providers>
       </body>
     </html>

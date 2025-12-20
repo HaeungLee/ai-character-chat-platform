@@ -1,5 +1,28 @@
 @import "tailwindcss";
 
+/* Custom Utilities */
+@layer utilities {
+  .glass-panel {
+    @apply backdrop-blur-xl border border-[var(--border)];
+    background: var(--card);
+  }
+
+  .nebula .glass-panel {
+    background: linear-gradient(135deg, rgba(11, 15, 31, 0.6) 0%, rgba(11, 15, 31, 0.2) 100%);
+    border-color: rgba(6, 182, 212, 0.2);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)];
+  }
+
+  .glow-effect {
+    box-shadow: 0 0 15px var(--primary);
+  }
+}
+
+
 /* =====================================================
    테마 변수 (다크 모드 지원)
    ===================================================== */
@@ -44,6 +67,31 @@
   --ring: #818cf8;
   --error: #f87171;
   --success: #4ade80;
+  --warning: #fbbf24;
+}
+
+.nebula {
+  --background: #050511;
+  /* Deep Midnight */
+  --foreground: #f8fafc;
+  --card: rgba(11, 15, 31, 0.7);
+  /* Translucent Navy */
+  --card-foreground: #e0e7ff;
+  --primary: #06b6d4;
+  /* Neon Cyan */
+  --primary-foreground: #000000;
+  --secondary: #8b5cf6;
+  /* Electric Purple */
+  --secondary-foreground: #ffffff;
+  --muted: rgba(15, 23, 42, 0.5);
+  --muted-foreground: #94a3b8;
+  --accent: #2e1065;
+  --accent-foreground: #e9d5ff;
+  --border: rgba(148, 163, 184, 0.1);
+  --input: rgba(15, 23, 42, 0.5);
+  --ring: #22d3ee;
+  --error: #fb7185;
+  --success: #34d399;
   --warning: #fbbf24;
 }
 
@@ -121,6 +169,7 @@ body {
     opacity: 0;
     transform: translate(-50%, -100%);
   }
+
   to {
     opacity: 1;
     transform: translate(-50%, 0);
@@ -132,6 +181,7 @@ body {
     opacity: 0;
     transform: scale(0.9);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -139,9 +189,12 @@ body {
 }
 
 @keyframes pulse-soft {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.6;
   }
@@ -164,10 +217,14 @@ body {
    ===================================================== */
 
 @keyframes blink {
-  0%, 50% {
+
+  0%,
+  50% {
     opacity: 1;
   }
-  51%, 100% {
+
+  51%,
+  100% {
     opacity: 0;
   }
 }

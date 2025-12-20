@@ -22,7 +22,7 @@ export const Card: React.FC<CardProps> = ({
     lg: 'p-6',
   }
 
-  const baseClasses = 'bg-white border border-gray-200 rounded-lg shadow-sm'
+  const baseClasses = 'bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm text-[var(--card-foreground)]'
 
   const hoverClasses = hover
     ? 'hover:shadow-md hover:border-gray-300 transition-all cursor-pointer'

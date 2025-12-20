@@ -12,11 +12,11 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 // 타입 정의
 // =====================================================
 
-type Theme = 'light' | 'dark' | 'system'
+type Theme = 'light' | 'dark' | 'nebula' | 'system'
 
 interface ThemeContextType {
   theme: Theme
-  resolvedTheme: 'light' | 'dark'
+  resolvedTheme: 'light' | 'dark' | 'nebula'
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
 }
@@ -33,7 +33,7 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>('system')
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('dark')
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark' | 'nebula'>('dark')
 
   // 시스템 테마 감지
   const getSystemTheme = useCallback((): 'light' | 'dark' => {
@@ -45,12 +45,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   // 테마 적용
   const applyTheme = useCallback((newTheme: Theme) => {
-    const resolved = newTheme === 'system' ? getSystemTheme() : newTheme
+    let resolved: 'light' | 'dark' | 'nebula';
+    if (newTheme === 'system') {
+      resolved = getSystemTheme();
+    } else {
+      resolved = newTheme;
+    }
     setResolvedTheme(resolved)
 
     // HTML 클래스 업데이트
     if (typeof document !== 'undefined') {
-      document.documentElement.classList.remove('light', 'dark')
+      document.documentElement.classList.remove('light', 'dark', 'nebula')
       document.documentElement.classList.add(resolved)
     }
   }, [getSystemTheme])
@@ -69,7 +74,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         applyTheme('system')
       }
     }
-    
+
     mediaQuery.addEventListener('change', handleChange)
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [applyTheme, theme])
@@ -81,9 +86,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(newTheme)
   }, [applyTheme])
 
-  // 테마 토글
+  // 테마 토글 (light -> dark -> nebula -> light)
   const toggleTheme = useCallback(() => {
-    const newTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
+    let newTheme: Theme;
+    if (resolvedTheme === 'light') newTheme = 'dark';
+    else if (resolvedTheme === 'dark') newTheme = 'nebula';
+    else newTheme = 'light';
+
     setTheme(newTheme)
   }, [resolvedTheme, setTheme])
 
