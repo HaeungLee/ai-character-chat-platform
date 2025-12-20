@@ -175,19 +175,74 @@ export default function CharacterChatPage() {
         const msgIndex = messages.findIndex(m => m.id === id)
         if (msgIndex === -1) return
 
-        // Remove this message and any following it? Or just replace content?
-        // Standard UX: Replace content with loading state, then stream new.
+        if (!token) {
+            setMessages(prev => prev.map(m => m.id === id ? { ...m, content: '오류: 인증이 필요합니다. 다시 로그인해주세요.' } : m))
+            return
+        }
 
-        // For Mock:
+        // 재생성은 "바로 직전 user 메시지"를 기준으로 다시 생성합니다.
+        // (해당 AI 메시지 이후의 대화는 무효화될 수 있으므로 기본적으로 잘라냅니다.)
+        const prevUserIndex = (() => {
+            for (let i = msgIndex - 1; i >= 0; i--) {
+                if (messages[i]?.role === 'user') return i
+            }
+            return -1
+        })()
+
+        if (prevUserIndex === -1) {
+            setMessages(prev => prev.map(m => m.id === id ? { ...m, content: '오류: 재생성할 기준 사용자 메시지를 찾을 수 없습니다.' } : m))
+            return
+        }
+
+        const userMessage = messages[prevUserIndex].content
+
+        // 이 AI 메시지까지는 유지하고, 그 뒤는 잘라내는 UX
         setIsTyping(true)
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, content: '' } : m)) // Clear content
+        setMessages(prev => {
+            const indexInPrev = prev.findIndex(m => m.id === id)
+            if (indexInPrev === -1) return prev
+            const truncated = prev.slice(0, indexInPrev + 1)
+            truncated[indexInPrev] = { ...truncated[indexInPrev], content: '' }
+            return truncated
+        })
 
-        setTimeout(() => {
-            setMessages(prev => prev.map(m =>
-                m.id === id ? { ...m, content: '(재생성된 답변) 이전보다 더 창의적인 답변입니다!' } : m
-            ))
-            setIsTyping(false)
-        }, 1500)
+        ;(async () => {
+            try {
+                // 재생성 시 히스토리는 해당 user 메시지 이전까지(최대 20개)
+                const conversationHistory = messages
+                    .slice(0, prevUserIndex)
+                    .slice(-20)
+                    .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+
+                const response = await fetch(`${API_URL}/api/ai/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        characterId,
+                        message: userMessage,
+                        conversationHistory,
+                        provider: 'openrouter',
+                    }),
+                })
+
+                const data = await response.json()
+                if (!response.ok) {
+                    throw new Error(data?.error || data?.message || 'AI 재생성 실패')
+                }
+
+                const regenerated = data?.data?.response || '(빈 응답)'
+
+                setMessages(prev => prev.map(m => m.id === id ? { ...m, content: regenerated } : m))
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : 'AI 재생성 실패'
+                setMessages(prev => prev.map(m => m.id === id ? { ...m, content: `오류: ${msg}` } : m))
+            } finally {
+                setIsTyping(false)
+            }
+        })()
     }
 
     return (
@@ -247,7 +302,7 @@ export default function CharacterChatPage() {
                             <MessageBubble
                                 key={msg.id}
                                 {...msg}
-                                characterName="AI Character"
+                                characterName={character?.name || 'AI Character'}
                                 onEdit={handleEditMessage}
                                 onRegenerate={msg.role === 'assistant' ? handleRegenerate : undefined}
                             />
