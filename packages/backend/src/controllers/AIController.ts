@@ -2,6 +2,8 @@
 import { Request, Response } from 'express'
 import { AIService } from '../services/AIService'
 import { logger } from '../utils/logger'
+import { prisma } from '../config/database'
+import { AuthenticatedRequest } from '../middleware/auth'
 
 export class AIController {
   private aiService: AIService
@@ -11,9 +13,9 @@ export class AIController {
   }
 
   // 캐릭터 채팅 응답 생성
-  generateCharacterResponse = async (req: Request, res: Response) => {
+  generateCharacterResponse = async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { characterId, message, conversationHistory } = req.body
+      const { characterId, message, conversationHistory, provider, model, nsfwMode } = req.body
       const userId = req.user?.id
 
       if (!characterId || !message) {
@@ -36,7 +38,12 @@ export class AIController {
       const response = await this.aiService.generateCharacterResponse(
         character,
         message,
-        conversationHistory || []
+        conversationHistory || [],
+        {
+          provider,
+          model,
+          nsfwMode,
+        }
       )
 
       // 로그 기록
@@ -67,7 +74,7 @@ export class AIController {
   }
 
   // 이미지 생성
-  generateImage = async (req: Request, res: Response) => {
+  generateImage = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const {
         prompt,
@@ -121,7 +128,7 @@ export class AIController {
   }
 
   // 일반 채팅 응답 생성
-  generateChatResponse = async (req: Request, res: Response) => {
+  generateChatResponse = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { messages, temperature, maxTokens } = req.body
       const userId = req.user?.id
@@ -188,7 +195,7 @@ export class AIController {
   }
 
   // 🆕 프로바이더 지정 채팅 응답 생성
-  generateChatWithProvider = async (req: Request, res: Response) => {
+  generateChatWithProvider = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { 
         messages, 
@@ -258,7 +265,7 @@ export class AIController {
   }
 
   // 🆕 프로바이더 지정 스트리밍 응답 생성
-  generateChatStreamWithProvider = async (req: Request, res: Response) => {
+  generateChatStreamWithProvider = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { 
         messages, 
@@ -355,9 +362,9 @@ export class AIController {
   }
 
   // 🆕 캐릭터 채팅 스트리밍 응답 생성 (SSE)
-  generateCharacterResponseStream = async (req: Request, res: Response) => {
+  generateCharacterResponseStream = async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { characterId, message, conversationHistory } = req.body
+      const { characterId, message, conversationHistory, provider, model, nsfwMode } = req.body
       const userId = req.user?.id
 
       if (!characterId || !message) {
@@ -393,7 +400,12 @@ export class AIController {
         const stream = this.aiService.generateCharacterResponseStream(
           character,
           message,
-          conversationHistory || []
+          conversationHistory || [],
+          {
+            provider,
+            model,
+            nsfwMode,
+          }
         )
 
         for await (const chunk of stream) {
@@ -445,7 +457,7 @@ export class AIController {
   }
 
   // 🆕 일반 채팅 스트리밍 응답 생성 (SSE)
-  generateChatResponseStream = async (req: Request, res: Response) => {
+  generateChatResponseStream = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { messages, temperature, maxTokens } = req.body
       const userId = req.user?.id
@@ -521,25 +533,24 @@ export class AIController {
 
   // 헬퍼 메서드: 캐릭터 정보 조회
   private async getCharacterById(characterId: string) {
-    // 실제로는 데이터베이스에서 조회
-    // 여기서는 샘플 데이터 반환
-    const sampleCharacters = {
-      'sample_char_1': {
-        id: 'sample_char_1',
-        name: '친절한 AI 어시스턴트',
-        personality: '항상 친절하고 도움이 되는 AI 어시스턴트입니다.',
-        systemPrompt: '당신은 친절하고 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 최대한 도움이 되는 답변을 제공하세요.',
-        temperature: 0.7,
+    const character = await prisma.character.findFirst({
+      where: { id: characterId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        personality: true,
+        systemPrompt: true,
       },
-      'sample_char_2': {
-        id: 'sample_char_2',
-        name: '창의적인 작가',
-        personality: '다양한 주제로 창의적인 글을 쓰는 AI 작가입니다.',
-        systemPrompt: '당신은 창의적인 작가입니다. 사용자의 요청에 따라 다양한 스타일의 글을 작성하세요.',
-        temperature: 0.8,
-      },
-    }
+    })
 
-    return sampleCharacters[characterId as keyof typeof sampleCharacters] || null
+    if (!character) return null
+
+    return {
+      id: character.id,
+      name: character.name,
+      personality: character.personality ?? '',
+      systemPrompt: character.systemPrompt,
+      temperature: 0.7,
+    }
   }
 }

@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import jwt, { Secret, SignOptions } from 'jsonwebtoken'
 import { User } from '@prisma/client'
 
 export interface JWTPayload {
@@ -44,9 +44,11 @@ export class AuthUtils {
       role: user.role,
     }
 
-    return jwt.sign(payload, this.JWT_SECRET, {
-      expiresIn: this.JWT_EXPIRES_IN,
-    })
+    const options: SignOptions = {
+      expiresIn: this.JWT_EXPIRES_IN as SignOptions['expiresIn'],
+    }
+
+    return jwt.sign(payload, this.JWT_SECRET as Secret, options)
   }
 
   /**
@@ -59,9 +61,11 @@ export class AuthUtils {
       role: user.role,
     }
 
-    return jwt.sign(payload, this.JWT_REFRESH_SECRET, {
-      expiresIn: this.JWT_REFRESH_EXPIRES_IN,
-    })
+    const options: SignOptions = {
+      expiresIn: this.JWT_REFRESH_EXPIRES_IN as SignOptions['expiresIn'],
+    }
+
+    return jwt.sign(payload, this.JWT_REFRESH_SECRET as Secret, options)
   }
 
   /**

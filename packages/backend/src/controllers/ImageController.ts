@@ -2,6 +2,7 @@
 import { Request, Response } from 'express'
 import { AIService } from '../services/AIService'
 import { logger } from '../utils/logger'
+import { AuthenticatedRequest } from '../middleware/auth'
 
 export class ImageController {
   private aiService: AIService
@@ -11,7 +12,7 @@ export class ImageController {
   }
 
   // 이미지 생성
-  generateImage = async (req: Request, res: Response) => {
+  generateImage = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const {
         prompt,
@@ -101,7 +102,7 @@ export class ImageController {
   }
 
   // 이미지 목록 조회
-  getImages = async (req: Request, res: Response) => {
+  getImages = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const {
         page = 1,
@@ -179,7 +180,7 @@ export class ImageController {
   }
 
   // 이미지 상세 조회
-  getImageById = async (req: Request, res: Response) => {
+  getImageById = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params
 
@@ -214,7 +215,7 @@ export class ImageController {
   }
 
   // 이미지 삭제
-  deleteImage = async (req: Request, res: Response) => {
+  deleteImage = async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params
       const userId = req.user?.id

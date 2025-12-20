@@ -10,6 +10,7 @@ import { AuthController } from './controllers/AuthController'
 import { AIController } from './controllers/AIController'
 import { ImageController } from './controllers/ImageController'
 import { AdminController } from './controllers/AdminController'
+import { CharacterController } from './controllers/CharacterController'
 import { memoryController } from './controllers/MemoryController'
 import { startMemoryCleanupJob } from './jobs/memoryCleanup'
 import { authenticateToken, requireAdmin } from './middleware/auth'
@@ -17,8 +18,9 @@ import { connectToMongoDB } from './config/mongodb'
 import { createAIServiceFromEnv } from './services/AIService'
 import { SocketService } from './services/SocketService'
 import { getUsageTrackingService } from './services/billing'
-import { prisma } from './config/database'
+import { prisma, redis as redisClient } from './config/database'
 import { logger } from './utils/logger'
+import mongoose from 'mongoose'
 
 // 환경 변수 로드
 dotenv.config()
@@ -83,6 +85,7 @@ const socketService = new SocketService(io, aiService)
 const aiController = new AIController(aiService)
 const imageController = new ImageController(aiService)
 const adminController = new AdminController(prisma)
+const characterController = new CharacterController(prisma)
 
 // UsageTracker를 AIService에 주입
 const usageTracker = getUsageTrackingService(prisma)
@@ -124,6 +127,11 @@ app.get('/api/auth/verify', authenticateToken, AuthController.verifyToken)
 app.post('/api/ai/chat', authenticateToken, aiController.generateCharacterResponse)
 app.post('/api/ai/generate', authenticateToken, aiController.generateChatResponse)
 app.get('/api/ai/status', aiController.getServiceStatus)
+
+// 캐릭터 API 라우트
+app.get('/api/characters', authenticateToken, characterController.listCharacters)
+app.get('/api/characters/:id', authenticateToken, characterController.getCharacter)
+app.post('/api/characters', authenticateToken, characterController.createCharacter)
 
 // 🆕 AI 스트리밍 라우트 (SSE - Server-Sent Events)
 app.post('/api/ai/chat/stream', authenticateToken, aiController.generateCharacterResponseStream)
@@ -253,7 +261,7 @@ const shutdown = async () => {
     }
 
     try {
-      redis.disconnect()
+      redisClient.disconnect()
       console.log('✅ Redis disconnected')
     } catch (error) {
       console.error('❌ Error disconnecting Redis:', error)

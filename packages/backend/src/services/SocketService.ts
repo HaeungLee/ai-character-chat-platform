@@ -5,6 +5,7 @@ import { AIService } from './AIService'
 import { memoryIntegration } from './memory'
 import { ChatMessageModel } from '../models/memory'
 import { logger } from '../utils/logger'
+import { prisma } from '../config/database'
 
 // =====================================================
 // 타입 정의
@@ -1198,24 +1199,25 @@ export class SocketService {
   private async getCharacterById(characterId: string) {
     // 실제로는 데이터베이스에서 조회
     // 여기서는 샘플 데이터 반환
-    const sampleCharacters = {
-      'sample_char_1': {
-        id: 'sample_char_1',
-        name: '친절한 AI 어시스턴트',
-        personality: '항상 친절하고 도움이 되는 AI 어시스턴트입니다.',
-        systemPrompt: '당신은 친절하고 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 최대한 도움이 되는 답변을 제공하세요.',
-        temperature: 0.7,
+    const character = await prisma.character.findFirst({
+      where: { id: characterId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        personality: true,
+        systemPrompt: true,
       },
-      'sample_char_2': {
-        id: 'sample_char_2',
-        name: '창의적인 작가',
-        personality: '다양한 주제로 창의적인 글을 쓰는 AI 작가입니다.',
-        systemPrompt: '당신은 창의적인 작가입니다. 사용자의 요청에 따라 다양한 스타일의 글을 작성하세요.',
-        temperature: 0.8,
-      },
-    }
+    })
 
-    return sampleCharacters[characterId as keyof typeof sampleCharacters] || null
+    if (!character) return null
+
+    return {
+      id: character.id,
+      name: character.name,
+      personality: character.personality ?? '',
+      systemPrompt: character.systemPrompt,
+      temperature: 0.7,
+    }
   }
 
   // 연결된 사용자 목록 조회

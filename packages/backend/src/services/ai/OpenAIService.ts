@@ -241,7 +241,7 @@ export class OpenAIService {
         n: 1,
       })
 
-      const imageUrl = response.data[0]?.url
+      const imageUrl = response.data?.[0]?.url
       if (!imageUrl) {
         throw new Error('이미지를 생성할 수 없습니다.')
       }

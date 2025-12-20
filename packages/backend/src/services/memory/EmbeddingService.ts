@@ -121,7 +121,7 @@ export class EmbeddingService {
         memoryType,
         text,
         textHash,
-        model: EMBEDDING_MODEL,
+        embeddingModel: EMBEDDING_MODEL,
         dimensions: EMBEDDING_DIMENSIONS,
         pgEmbeddingId: embeddingId,
         isSynced: true,

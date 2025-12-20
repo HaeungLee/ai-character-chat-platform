@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { useAuth } from '@/lib/context'
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
 // Mock Data Types
 interface Message {
     id: string
@@ -14,21 +16,25 @@ interface Message {
     timestamp: string
 }
 
+interface CharacterInfo {
+    id: string
+    name: string
+    avatar?: string | null
+    personality?: string
+    description?: string | null
+    greeting?: string | null
+}
+
 export default function CharacterChatPage() {
     const params = useParams()
     const router = useRouter()
-    const { isAuthenticated } = useAuth()
+    const { isAuthenticated, isLoading: authLoading, token } = useAuth()
     const characterId = params.characterId as string
 
-    // Mock State
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: '1',
-            role: 'assistant',
-            content: '안녕하세요! 당신과 대화하게 되어 기뻐요. 오늘 하루는 어떠셨나요?',
-            timestamp: new Date().toISOString()
-        }
-    ])
+    const [character, setCharacter] = useState<CharacterInfo | null>(null)
+    const [loadError, setLoadError] = useState<string | null>(null)
+
+    const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState('')
     const [isTyping, setIsTyping] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -42,9 +48,56 @@ export default function CharacterChatPage() {
         scrollToBottom()
     }, [messages, isTyping])
 
+    // 인증 체크
+    useEffect(() => {
+        if (!authLoading && !isAuthenticated) {
+            router.push('/auth/login')
+        }
+    }, [authLoading, isAuthenticated, router])
+
+    // 캐릭터 로드
+    useEffect(() => {
+        const loadCharacter = async () => {
+            if (!token || !characterId) return
+            setLoadError(null)
+            try {
+                const response = await fetch(`${API_URL}/api/characters/${characterId}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    }
+                })
+                const data = await response.json()
+                if (!response.ok) throw new Error(data?.error || data?.message || '캐릭터를 불러오지 못했습니다.')
+
+                setCharacter(data.data)
+
+                // 초기 인사 메시지 1회 세팅
+                setMessages(prev => {
+                    if (prev.length) return prev
+                    return [
+                        {
+                            id: crypto.randomUUID(),
+                            role: 'assistant',
+                            content: data?.data?.greeting || '안녕하세요! 무엇을 도와드릴까요?',
+                            timestamp: new Date().toISOString(),
+                        }
+                    ]
+                })
+            } catch (e) {
+                setLoadError(e instanceof Error ? e.message : '캐릭터 로드 실패')
+            }
+        }
+
+        if (isAuthenticated) {
+            loadCharacter()
+        }
+    }, [isAuthenticated, token, characterId])
+
     const handleSendMessage = async (e?: React.FormEvent) => {
         e?.preventDefault()
         if (!input.trim() || isTyping) return
+        if (!token) return
 
         const userMsg: Message = {
             id: crypto.randomUUID(),
@@ -57,17 +110,49 @@ export default function CharacterChatPage() {
         setInput('')
         setIsTyping(true)
 
-        // Mock AI Response
-        setTimeout(() => {
+        try {
+            const conversationHistory = messages
+                .slice(-20)
+                .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+
+            const response = await fetch(`${API_URL}/api/ai/chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    characterId,
+                    message: userMsg.content,
+                    conversationHistory,
+                    provider: 'openrouter',
+                }),
+            })
+
+            const data = await response.json()
+            if (!response.ok) {
+                throw new Error(data?.error || data?.message || 'AI 응답 생성 실패')
+            }
+
             const aiMsg: Message = {
                 id: crypto.randomUUID(),
                 role: 'assistant',
-                content: `[Mock Response] "${userMsg.content}"에 대한 반응입니다. \n\n(실제 LLM 연동 시 이곳에 답변이 스트리밍됩니다.)`,
-                timestamp: new Date().toISOString()
+                content: data?.data?.response || '(빈 응답)',
+                timestamp: new Date().toISOString(),
             }
+
             setMessages(prev => [...prev, aiMsg])
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'AI 호출 실패'
+            setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: `오류: ${msg}`,
+                timestamp: new Date().toISOString(),
+            }])
+        } finally {
             setIsTyping(false)
-        }, 1500)
+        }
     }
 
     const handleEditMessage = (id: string, newContent: string) => {
@@ -114,11 +199,16 @@ export default function CharacterChatPage() {
                         ← 나가기
                     </Link>
                     <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 mx-auto mb-4 flex items-center justify-center text-4xl text-white">
-                        A
+                        {character?.avatar ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={character.avatar} alt={character.name} className="w-full h-full rounded-full object-cover" />
+                        ) : (
+                            (character?.name || 'A').charAt(0)
+                        )}
                     </div>
-                    <h2 className="text-xl font-bold text-center text-[var(--foreground)]">AI Character</h2>
+                    <h2 className="text-xl font-bold text-center text-[var(--foreground)]">{character?.name || 'AI Character'}</h2>
                     <p className="text-sm text-[var(--muted-foreground)] text-center mt-1">
-                        "안녕하세요! 친절한 AI입니다."
+                        {character?.description ? `"${character.description}"` : '"안녕하세요! 친절한 AI입니다."'}
                     </p>
                 </div>
 
@@ -127,6 +217,12 @@ export default function CharacterChatPage() {
                         <h3 className="font-bold mb-2">기억 (Memory)</h3>
                         <p className="text-[var(--muted-foreground)] text-xs">아직 생성된 기억이 없습니다.</p>
                     </div>
+
+                    {loadError && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-500">
+                            {loadError}
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-4 border-t border-[var(--border)] text-xs text-center text-[var(--muted-foreground)]">
@@ -139,7 +235,7 @@ export default function CharacterChatPage() {
                 {/* Mobile Header */}
                 <header className="md:hidden h-14 border-b border-[var(--border)] flex items-center px-4 justify-between bg-[var(--card)]">
                     <Link href="/characters" className="text-[var(--muted-foreground)]">←</Link>
-                    <span className="font-bold">AI Character</span>
+                    <span className="font-bold">{character?.name || 'AI Character'}</span>
                     <div className="w-6" /> {/* Spacer */}
                 </header>
 

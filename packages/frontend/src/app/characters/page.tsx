@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useAuth } from '@/lib/context'
 import { useRouter } from 'next/navigation'
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
 interface Character {
   id: string
   name: string
@@ -35,38 +37,27 @@ export default function CharactersPage() {
   // 캐릭터 목록 로드
   useEffect(() => {
     const loadCharacters = async () => {
-      // TODO: 실제 API 호출
-      // 샘플 데이터
-      setCharacters([
-        {
-          id: '1',
-          name: '친절한 비서',
-          personality: '항상 친절하고 도움이 되는 AI 비서입니다.',
-          description: '업무, 일정 관리, 질문 답변 등을 도와드립니다.',
-          isPublic: true,
-          createdAt: '2024-12-01',
-          chatCount: 156,
-        },
-        {
-          id: '2',
-          name: '판타지 기사',
-          personality: '명예를 중시하는 중세 기사 캐릭터입니다.',
-          description: '모험과 전투 이야기를 나눌 수 있습니다.',
-          isPublic: true,
-          createdAt: '2024-12-05',
-          chatCount: 89,
-        },
-        {
-          id: '3',
-          name: '츤데레 고양이',
-          personality: '겉으로는 시크하지만 속으로는 다정한 고양이입니다.',
-          description: '귀여운 대화를 나눠보세요.',
-          isPublic: false,
-          createdAt: '2024-12-10',
-          chatCount: 42,
-        },
-      ])
-      setIsLoading(false)
+      setIsLoading(true)
+      try {
+        const response = await fetch(`${API_URL}/api/characters`, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        })
+
+        const data = await response.json()
+        if (!response.ok) {
+          throw new Error(data?.error || data?.message || '캐릭터 목록을 불러오는데 실패했습니다.')
+        }
+
+        setCharacters(Array.isArray(data?.data) ? data.data : [])
+      } catch (e) {
+        console.error(e)
+        setCharacters([])
+      } finally {
+        setIsLoading(false)
+      }
     }
 
     if (isAuthenticated) {

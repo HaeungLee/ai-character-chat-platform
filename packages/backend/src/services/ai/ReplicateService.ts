@@ -2,6 +2,15 @@
 import Replicate from 'replicate'
 import { logger } from '../../utils/logger'
 
+type ReplicateModelRef = `${string}/${string}` | `${string}/${string}:${string}`
+
+function assertReplicateModelRef(value: string): asserts value is ReplicateModelRef {
+  // Replicate model ref format: "owner/name" or "owner/name:version"
+  if (!/^[^/\s]+\/[^\s]+(:[^\s]+)?$/.test(value)) {
+    throw new Error(`잘못된 Replicate 모델 형식입니다: ${value}`)
+  }
+}
+
 export interface ReplicateConfig {
   apiToken: string
   model?: string
@@ -45,6 +54,7 @@ export class ReplicateService {
 
       logger.info(`Replicate 이미지 생성 시작: ${model}`, { prompt: prompt.substring(0, 100) })
 
+      assertReplicateModelRef(model)
       const output = await this.client.run(model, { input })
 
       if (!output || !Array.isArray(output) || output.length === 0) {

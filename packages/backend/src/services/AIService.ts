@@ -372,17 +372,30 @@ export class AIService {
   // 일반 채팅 응답 생성
   async generateChatResponse(
     messages: ChatMessage[],
-    options?: {
-      model?: 'openai'
-      temperature?: number
-      maxTokens?: number
-    }
+    options?: ChatOptions
   ): Promise<string> {
+    const provider = this.selectProvider(options)
+
+    if (provider === 'openrouter') {
+      if (!this.openrouter) {
+        throw new Error('OpenRouter 서비스가 설정되지 않았습니다.')
+      }
+      return await this.openrouter.generateChatResponse(messages, {
+        model: options?.model,
+        temperature: options?.temperature,
+        maxTokens: options?.maxTokens,
+      })
+    }
+
     if (!this.openai) {
       throw new Error('OpenAI 서비스가 설정되지 않았습니다.')
     }
 
-    return await this.openai.generateChatResponse(messages, options)
+    return await this.openai.generateChatResponse(messages, {
+      model: options?.model,
+      temperature: options?.temperature,
+      maxTokens: options?.maxTokens,
+    })
   }
 
   // 서비스 상태 확인
@@ -487,7 +500,20 @@ export function createAIService(config: AIServiceConfig): AIService {
 export function createAIServiceFromEnv(): AIService {
   const config: AIServiceConfig = {}
 
-  if (process.env.OPENAI_API_KEY) {
+  const isPlaceholder = (value?: string | null): boolean => {
+    if (!value) return true
+    const v = value.trim()
+    if (!v) return true
+    return (
+      v.includes('your-openai-api-key-here') ||
+      v.includes('your-replicate-api-token-here') ||
+      v.includes('your-stability-api-key-here') ||
+      v.includes('sk-your-openai-api-key-here') ||
+      v.includes('r8_your-replicate-api-token-here')
+    )
+  }
+
+  if (process.env.OPENAI_API_KEY && !isPlaceholder(process.env.OPENAI_API_KEY)) {
     config.openai = {
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORGANIZATION_ID,
@@ -497,7 +523,7 @@ export function createAIServiceFromEnv(): AIService {
     }
   }
 
-  if (process.env.OPENROUTER_API_KEY) {
+  if (process.env.OPENROUTER_API_KEY && !isPlaceholder(process.env.OPENROUTER_API_KEY)) {
     config.openrouter = {
       apiKey: process.env.OPENROUTER_API_KEY,
       siteUrl: process.env.OPENROUTER_SITE_URL || process.env.CORS_ORIGIN,
@@ -506,13 +532,13 @@ export function createAIServiceFromEnv(): AIService {
     }
   }
 
-  if (process.env.REPLICATE_API_TOKEN) {
+  if (process.env.REPLICATE_API_TOKEN && !isPlaceholder(process.env.REPLICATE_API_TOKEN)) {
     config.replicate = {
       apiToken: process.env.REPLICATE_API_TOKEN,
     }
   }
 
-  if (process.env.STABILITY_API_KEY) {
+  if (process.env.STABILITY_API_KEY && !isPlaceholder(process.env.STABILITY_API_KEY)) {
     config.stability = {
       apiKey: process.env.STABILITY_API_KEY,
     }

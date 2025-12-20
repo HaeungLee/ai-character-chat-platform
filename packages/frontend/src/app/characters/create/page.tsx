@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/context'
 import { LorebookManager, LorebookEntryData } from '@/components/lorebook-manager'
 import { ExampleDialogueManager, DialoguePair } from '@/components/example-dialogue-manager'
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
 // 성격 프리셋
 const PERSONALITY_PRESETS = [
   { id: 'friendly', label: '친근함', emoji: '😊', description: '따뜻하고 다정한 성격' },
@@ -83,6 +85,10 @@ export default function CreateCharacterPage() {
     setIsLoading(true)
 
     try {
+      if (!token) {
+        throw new Error('인증이 필요합니다. 다시 로그인해주세요.')
+      }
+
       const payload = {
         name,
         personality,
@@ -96,9 +102,19 @@ export default function CreateCharacterPage() {
         // TODO: Backend should handle parsing examples into few-shot prompt
       }
 
-      console.log('Submitting:', payload)
-      // TODO: 실제 API 호출
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      const response = await fetch(`${API_URL}/api/characters`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || '캐릭터 생성에 실패했습니다.')
+      }
 
       router.push('/characters')
     } catch (err) {
