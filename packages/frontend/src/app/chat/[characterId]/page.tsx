@@ -14,6 +14,7 @@ interface Message {
     role: 'user' | 'assistant'
     content: string
     timestamp: string
+    isStreaming?: boolean
 }
 
 interface CharacterInfo {
@@ -38,6 +39,96 @@ export default function CharacterChatPage() {
     const [input, setInput] = useState('')
     const [isTyping, setIsTyping] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
+
+    const streamSse = async (args: {
+        characterId: string
+        message: string
+        token: string
+        conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+        onStart?: () => void
+        onChunk: (chunk: string) => void
+        onDone?: (full: string) => void
+    }) => {
+        const response = await fetch(`${API_URL}/api/ai/chat/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${args.token}`,
+            },
+            body: JSON.stringify({
+                characterId: args.characterId,
+                message: args.message,
+                conversationHistory: args.conversationHistory,
+                provider: 'openrouter',
+            }),
+        })
+
+        if (!response.ok) {
+            const text = await response.text().catch(() => '')
+            throw new Error(text || `스트리밍 요청 실패 (${response.status})`)
+        }
+
+        if (!response.body) {
+            throw new Error('스트리밍 응답을 받을 수 없습니다.')
+        }
+
+        args.onStart?.()
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
+        let full = ''
+
+        while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+
+            // SSE event delimiter: blank line
+            const events = buffer.split('\n\n')
+            buffer = events.pop() ?? ''
+
+            for (const evt of events) {
+                const lines = evt.split('\n')
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue
+                    const payload = line.slice(6).trim()
+                    if (!payload) continue
+
+                    if (payload === '[DONE]') {
+                        args.onDone?.(full)
+                        return
+                    }
+
+                    try {
+                        const parsed = JSON.parse(payload)
+                        if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
+                            full += parsed.content
+                            args.onChunk(parsed.content)
+                        }
+                        if (parsed?.type === 'done' && typeof parsed?.fullResponse === 'string') {
+                            // Some servers also send fullResponse at the end
+                            args.onDone?.(parsed.fullResponse)
+                            return
+                        }
+                        if (parsed?.type === 'error') {
+                            throw new Error(parsed?.error || '스트리밍 중 오류가 발생했습니다.')
+                        }
+                    } catch (e) {
+                        // If JSON parse fails, ignore (some SSE servers can send plain text)
+                        // but still allow raw text streaming as fallback
+                        if (payload && payload !== '[DONE]') {
+                            full += payload
+                            args.onChunk(payload)
+                        }
+                    }
+                }
+            }
+        }
+
+        args.onDone?.(full)
+    }
 
     // Scroll to bottom
     const scrollToBottom = () => {
@@ -110,46 +201,41 @@ export default function CharacterChatPage() {
         setInput('')
         setIsTyping(true)
 
+        const assistantId = crypto.randomUUID()
+        setMessages(prev => [...prev, {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            isStreaming: true,
+        }])
+
         try {
-            const conversationHistory = messages
+            const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = messages
                 .slice(-20)
-                .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+                .map((m): { role: 'user' | 'assistant'; content: string } => ({ role: m.role, content: m.content }))
 
-            const response = await fetch(`${API_URL}/api/ai/chat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
+            await streamSse({
+                characterId,
+                message: userMsg.content,
+                token,
+                conversationHistory,
+                onChunk: (chunk) => {
+                    setMessages(prev => prev.map(m => m.id === assistantId
+                        ? { ...m, content: (m.content || '') + chunk }
+                        : m
+                    ))
                 },
-                body: JSON.stringify({
-                    characterId,
-                    message: userMsg.content,
-                    conversationHistory,
-                    provider: 'openrouter',
-                }),
+                onDone: () => {
+                    setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, isStreaming: false } : m))
+                }
             })
-
-            const data = await response.json()
-            if (!response.ok) {
-                throw new Error(data?.error || data?.message || 'AI 응답 생성 실패')
-            }
-
-            const aiMsg: Message = {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                content: data?.data?.response || '(빈 응답)',
-                timestamp: new Date().toISOString(),
-            }
-
-            setMessages(prev => [...prev, aiMsg])
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'AI 호출 실패'
-            setMessages(prev => [...prev, {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                content: `오류: ${msg}`,
-                timestamp: new Date().toISOString(),
-            }])
+            setMessages(prev => prev.map(m => m.id === assistantId
+                ? { ...m, content: `오류: ${msg}`, isStreaming: false }
+                : m
+            ))
         } finally {
             setIsTyping(false)
         }
@@ -202,43 +288,36 @@ export default function CharacterChatPage() {
             const indexInPrev = prev.findIndex(m => m.id === id)
             if (indexInPrev === -1) return prev
             const truncated = prev.slice(0, indexInPrev + 1)
-            truncated[indexInPrev] = { ...truncated[indexInPrev], content: '' }
+            truncated[indexInPrev] = { ...truncated[indexInPrev], content: '', isStreaming: true }
             return truncated
         })
 
         ;(async () => {
             try {
                 // 재생성 시 히스토리는 해당 user 메시지 이전까지(최대 20개)
-                const conversationHistory = messages
+                const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = messages
                     .slice(0, prevUserIndex)
                     .slice(-20)
-                    .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+                    .map((m): { role: 'user' | 'assistant'; content: string } => ({ role: m.role, content: m.content }))
 
-                const response = await fetch(`${API_URL}/api/ai/chat`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`,
+                await streamSse({
+                    characterId,
+                    message: userMessage,
+                    token,
+                    conversationHistory,
+                    onChunk: (chunk) => {
+                        setMessages(prev => prev.map(m => m.id === id
+                            ? { ...m, content: (m.content || '') + chunk }
+                            : m
+                        ))
                     },
-                    body: JSON.stringify({
-                        characterId,
-                        message: userMessage,
-                        conversationHistory,
-                        provider: 'openrouter',
-                    }),
+                    onDone: () => {
+                        setMessages(prev => prev.map(m => m.id === id ? { ...m, isStreaming: false } : m))
+                    }
                 })
-
-                const data = await response.json()
-                if (!response.ok) {
-                    throw new Error(data?.error || data?.message || 'AI 재생성 실패')
-                }
-
-                const regenerated = data?.data?.response || '(빈 응답)'
-
-                setMessages(prev => prev.map(m => m.id === id ? { ...m, content: regenerated } : m))
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'AI 재생성 실패'
-                setMessages(prev => prev.map(m => m.id === id ? { ...m, content: `오류: ${msg}` } : m))
+                setMessages(prev => prev.map(m => m.id === id ? { ...m, content: `오류: ${msg}`, isStreaming: false } : m))
             } finally {
                 setIsTyping(false)
             }
