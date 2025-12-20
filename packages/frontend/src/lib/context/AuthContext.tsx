@@ -111,11 +111,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(data.message || '로그인에 실패했습니다.')
     }
 
-    localStorage.setItem('auth_token', data.token)
-    
+    // 백엔드는 tokens 객체로 반환 (accessToken, refreshToken)
+    const accessToken = data.tokens?.accessToken || data.token
+
+    localStorage.setItem('auth_token', accessToken)
+
     setState({
       user: data.user,
-      token: data.token,
+      token: accessToken,
       isLoading: false,
       isAuthenticated: true,
     })

@@ -231,16 +231,44 @@ server.listen(PORT, () => {
 })
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully')
-  server.close(() => {
-    console.log('Process terminated')
-  })
-})
+const shutdown = async () => {
+  console.log('\n🛑 Shutting down gracefully...')
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully')
-  server.close(() => {
-    console.log('Process terminated')
+  server.close(async () => {
+    console.log('✅ HTTP server closed')
+
+    // Close database connections
+    try {
+      await prisma.$disconnect()
+      console.log('✅ Prisma disconnected')
+    } catch (error) {
+      console.error('❌ Error disconnecting Prisma:', error)
+    }
+
+    try {
+      await mongoose.connection.close()
+      console.log('✅ MongoDB disconnected')
+    } catch (error) {
+      console.error('❌ Error disconnecting MongoDB:', error)
+    }
+
+    try {
+      redis.disconnect()
+      console.log('✅ Redis disconnected')
+    } catch (error) {
+      console.error('❌ Error disconnecting Redis:', error)
+    }
+
+    console.log('👋 Process terminated')
+    process.exit(0)
   })
-})
+
+  // Force close after 10 seconds
+  setTimeout(() => {
+    console.error('⚠️  Forced shutdown after timeout')
+    process.exit(1)
+  }, 10000)
+}
+
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)  // Ctrl+C

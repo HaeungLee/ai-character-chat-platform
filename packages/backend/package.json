@@ -4,7 +4,9 @@
   "description": "Backend API for AI Character Chat Platform",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only --exit-child src/index.ts",
+    "dev:clean": "npm run kill-port && npm run dev",
+    "kill-port": "npx kill-port 8000",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",

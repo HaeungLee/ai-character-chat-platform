@@ -110,7 +110,7 @@ export class SocketService {
 
   // 연결 처리
   private handleConnection(socket: Socket) {
-    const userId = socket.data.user.id
+    const userId = socket.data.user.userId || socket.data.user.id
     const userName = socket.data.user.email
 
     // 🆕 동일 사용자 중복 연결 방지
