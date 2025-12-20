@@ -199,11 +199,90 @@ export default function RegisterPage() {
                     ))}
                   </div>
                   <p className={`text-xs ${
-                    passwordStrength.strength <= 2 ? 'text-red-500' : 
+                    passwordStrength.strength <= 2 ? 'text-red-500' :
                     passwordStrength.strength <= 3 ? 'text-yellow-500' : 'text-green-500'
                   }`}>
                     비밀번호 강도: {passwordStrength.label}
                   </p>
+                </div>
+              )}
+
+              {/* 비밀번호 요구사항 체크리스트 */}
+              {password && (
+                <div className="mt-3 p-3 rounded-lg bg-[var(--secondary)] border border-[var(--border)] space-y-1.5">
+                  <p className="text-xs font-medium text-[var(--muted-foreground)] mb-2">비밀번호 요구사항:</p>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                        passwordRequirements.minLength ? 'bg-green-500' : 'bg-[var(--muted)]'
+                      }`}>
+                        {passwordRequirements.minLength && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={passwordRequirements.minLength ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}>
+                        최소 8자 이상
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                        passwordRequirements.hasUppercase ? 'bg-green-500' : 'bg-[var(--muted)]'
+                      }`}>
+                        {passwordRequirements.hasUppercase && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={passwordRequirements.hasUppercase ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}>
+                        대문자 포함 (A-Z)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                        passwordRequirements.hasLowercase ? 'bg-green-500' : 'bg-[var(--muted)]'
+                      }`}>
+                        {passwordRequirements.hasLowercase && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={passwordRequirements.hasLowercase ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}>
+                        소문자 포함 (a-z)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                        passwordRequirements.hasNumber ? 'bg-green-500' : 'bg-[var(--muted)]'
+                      }`}>
+                        {passwordRequirements.hasNumber && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={passwordRequirements.hasNumber ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}>
+                        숫자 포함 (0-9)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                        passwordRequirements.hasSpecialChar ? 'bg-green-500' : 'bg-[var(--muted)]'
+                      }`}>
+                        {passwordRequirements.hasSpecialChar && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={passwordRequirements.hasSpecialChar ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}>
+                        특수문자 포함 (!@#$%^&*)
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
