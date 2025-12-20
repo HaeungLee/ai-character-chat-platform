@@ -39,6 +39,14 @@ export default function CharacterChatPage() {
     const [input, setInput] = useState('')
     const [isTyping, setIsTyping] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
+    const activeStreamAbortRef = useRef<AbortController | null>(null)
+
+    useEffect(() => {
+        return () => {
+            activeStreamAbortRef.current?.abort()
+            activeStreamAbortRef.current = null
+        }
+    }, [])
 
     const streamSse = async (args: {
         characterId: string
@@ -49,19 +57,35 @@ export default function CharacterChatPage() {
         onChunk: (chunk: string) => void
         onDone?: (full: string) => void
     }) => {
-        const response = await fetch(`${API_URL}/api/ai/chat/stream`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${args.token}`,
-            },
-            body: JSON.stringify({
-                characterId: args.characterId,
-                message: args.message,
-                conversationHistory: args.conversationHistory,
-                provider: 'openrouter',
-            }),
-        })
+        // Cancel any in-flight stream to avoid interleaved UI updates.
+        activeStreamAbortRef.current?.abort()
+        const abortController = new AbortController()
+        activeStreamAbortRef.current = abortController
+
+        let response: Response
+        try {
+            response = await fetch(`${API_URL}/api/ai/chat/stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${args.token}`,
+                },
+                body: JSON.stringify({
+                    characterId: args.characterId,
+                    message: args.message,
+                    conversationHistory: args.conversationHistory,
+                    provider: 'openrouter',
+                }),
+                signal: abortController.signal,
+            })
+        } catch (e) {
+            const err = e as unknown as { name?: string }
+            if (err?.name === 'AbortError') {
+                args.onDone?.('')
+                return
+            }
+            throw e
+        }
 
         if (!response.ok) {
             const text = await response.text().catch(() => '')
@@ -79,55 +103,80 @@ export default function CharacterChatPage() {
         let buffer = ''
         let full = ''
 
-        while (true) {
-            const { value, done } = await reader.read()
-            if (done) break
+        const extractEventPayloads = (evtBlock: string): string[] => {
+            // Supports multiline `data:` fields per SSE spec.
+            const lines = evtBlock.split('\n')
+            const dataLines: string[] = []
+            for (const line of lines) {
+                if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trimStart())
+                }
+            }
+            if (dataLines.length === 0) return []
+            return [dataLines.join('\n')]
+        }
 
-            buffer += decoder.decode(value, { stream: true })
+        try {
+            while (true) {
+                const { value, done } = await reader.read()
+                if (done) break
 
-            // SSE event delimiter: blank line
-            const events = buffer.split('\n\n')
-            buffer = events.pop() ?? ''
+                buffer += decoder.decode(value, { stream: true })
+                buffer = buffer.replace(/\r\n/g, '\n')
 
-            for (const evt of events) {
-                const lines = evt.split('\n')
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue
-                    const payload = line.slice(6).trim()
-                    if (!payload) continue
+                // SSE event delimiter: blank line
+                const events = buffer.split('\n\n')
+                buffer = events.pop() ?? ''
 
-                    if (payload === '[DONE]') {
-                        args.onDone?.(full)
-                        return
-                    }
+                for (const evt of events) {
+                    const payloads = extractEventPayloads(evt)
+                    for (const payloadRaw of payloads) {
+                        const payload = payloadRaw.trim()
+                        if (!payload) continue
 
-                    try {
-                        const parsed = JSON.parse(payload)
-                        if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
-                            full += parsed.content
-                            args.onChunk(parsed.content)
-                        }
-                        if (parsed?.type === 'done' && typeof parsed?.fullResponse === 'string') {
-                            // Some servers also send fullResponse at the end
-                            args.onDone?.(parsed.fullResponse)
+                        if (payload === '[DONE]') {
+                            args.onDone?.(full)
                             return
                         }
-                        if (parsed?.type === 'error') {
-                            throw new Error(parsed?.error || '스트리밍 중 오류가 발생했습니다.')
-                        }
-                    } catch (e) {
-                        // If JSON parse fails, ignore (some SSE servers can send plain text)
-                        // but still allow raw text streaming as fallback
-                        if (payload && payload !== '[DONE]') {
-                            full += payload
-                            args.onChunk(payload)
+
+                        try {
+                            const parsed = JSON.parse(payload)
+                            if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
+                                full += parsed.content
+                                args.onChunk(parsed.content)
+                                continue
+                            }
+                            if (parsed?.type === 'done' && typeof parsed?.fullResponse === 'string') {
+                                args.onDone?.(parsed.fullResponse)
+                                return
+                            }
+                            if (parsed?.type === 'error') {
+                                throw new Error(parsed?.error || '스트리밍 중 오류가 발생했습니다.')
+                            }
+                        } catch (e) {
+                            // Fallback: treat as raw text chunk (some servers send plain text)
+                            if (payload && payload !== '[DONE]') {
+                                full += payload
+                                args.onChunk(payload)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        args.onDone?.(full)
+            args.onDone?.(full)
+        } catch (e) {
+            const err = e as unknown as { name?: string }
+            if (err?.name === 'AbortError') {
+                args.onDone?.(full)
+                return
+            }
+            throw e
+        } finally {
+            if (activeStreamAbortRef.current === abortController) {
+                activeStreamAbortRef.current = null
+            }
+        }
     }
 
     // Scroll to bottom
@@ -197,7 +246,8 @@ export default function CharacterChatPage() {
             timestamp: new Date().toISOString()
         }
 
-        setMessages(prev => [...prev, userMsg])
+        // If anything was streaming, stop the cursor before sending a new request.
+        setMessages(prev => [...prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m), userMsg])
         setInput('')
         setIsTyping(true)
 
@@ -258,6 +308,8 @@ export default function CharacterChatPage() {
     }
 
     const handleRegenerate = (id: string) => {
+        if (isTyping) return
+
         const msgIndex = messages.findIndex(m => m.id === id)
         if (msgIndex === -1) return
 
@@ -265,6 +317,9 @@ export default function CharacterChatPage() {
             setMessages(prev => prev.map(m => m.id === id ? { ...m, content: '오류: 인증이 필요합니다. 다시 로그인해주세요.' } : m))
             return
         }
+
+        // Cancel any in-flight stream before starting a new one.
+        activeStreamAbortRef.current?.abort()
 
         // 재생성은 "바로 직전 user 메시지"를 기준으로 다시 생성합니다.
         // (해당 AI 메시지 이후의 대화는 무효화될 수 있으므로 기본적으로 잘라냅니다.)
