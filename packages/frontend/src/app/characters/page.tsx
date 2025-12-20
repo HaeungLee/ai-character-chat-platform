@@ -19,7 +19,7 @@ interface Character {
 export default function CharactersPage() {
   const router = useRouter()
   const { isAuthenticated, isLoading: authLoading, token } = useAuth()
-  
+
   const [characters, setCharacters] = useState<Character[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -77,7 +77,7 @@ export default function CharactersPage() {
   const filteredCharacters = characters.filter(char => {
     const matchesSearch = char.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       char.personality.toLowerCase().includes(searchQuery.toLowerCase())
-    
+
     if (filter === 'my') return matchesSearch && !char.isPublic
     if (filter === 'public') return matchesSearch && char.isPublic
     return matchesSearch
@@ -167,8 +167,8 @@ export default function CharactersPage() {
                 key={option.value}
                 onClick={() => setFilter(option.value as typeof filter)}
                 className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all
-                  ${filter === option.value 
-                    ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm' 
+                  ${filter === option.value
+                    ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm'
                     : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
                   }`}
               >
@@ -267,7 +267,7 @@ export default function CharactersPage() {
                 {/* 액션 버튼 */}
                 <div className="flex gap-2">
                   <Link
-                    href={`/chat?characterId=${character.id}`}
+                    href={`/chat/${character.id}`}
                     className="flex-1 py-2 px-3 rounded-lg text-sm font-medium text-center
                       bg-[var(--primary)] text-[var(--primary-foreground)]
                       hover:opacity-90 transition-opacity"
