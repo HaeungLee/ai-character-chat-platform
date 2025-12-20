@@ -54,7 +54,7 @@ export default function HomePage() {
               {isAuthenticated ? (
                 <>
                   <Link
-                    href="/chat"
+                    href="/characters"
                     className="hidden sm:inline-flex px-4 py-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] font-medium transition-colors"
                   >
                     채팅
@@ -136,7 +136,7 @@ export default function HomePage() {
             {/* CTA 버튼 */}
             <div className="flex flex-col sm:flex-row justify-center gap-4 mb-12 sm:mb-16">
               <Link
-                href={isAuthenticated ? '/chat' : '/auth/register'}
+                href={isAuthenticated ? '/characters' : '/auth/register'}
                 className="px-8 py-4 rounded-xl font-medium text-white text-lg
                   bg-gradient-to-r from-indigo-500 to-purple-600 
                   hover:from-indigo-600 hover:to-purple-700
@@ -283,7 +283,7 @@ export default function HomePage() {
               매일 새로운 대화가 기다립니다.
             </p>
             <Link
-              href={isAuthenticated ? '/chat' : '/auth/register'}
+              href={isAuthenticated ? '/characters' : '/auth/register'}
               className="inline-flex items-center gap-2 px-8 py-4 rounded-xl font-medium text-lg
                 bg-white text-indigo-600 
                 hover:bg-white/90 shadow-lg
@@ -309,7 +309,7 @@ export default function HomePage() {
               </div>
               <span className="font-medium text-[var(--foreground)]">Character Chat</span>
             </div>
-            
+
             <div className="flex flex-wrap justify-center gap-6 text-sm text-[var(--muted-foreground)]">
               <Link href="/terms" className="hover:text-[var(--foreground)] transition-colors">
                 이용약관
