@@ -75,6 +75,10 @@ model Character {
 
   // 채팅 세션
   chats       Chat[]
+  
+  // 관계 및 확장 기능
+  lorebookEntries LorebookEntry[] // 세계관/설정집
+  exampleDialogues String?        // Few-shot 예제 대화
 
   // 타임스탬프
   createdAt   DateTime @default(now())
@@ -82,6 +86,29 @@ model Character {
   isActive    Boolean  @default(true)
 
   @@map("characters")
+}
+
+
+// 캐릭터 세계관/설정집 (Lorebook)
+model LorebookEntry {
+  id          String   @id @default(cuid())
+  
+  // 관계
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  
+  // 내용
+  keys        String[] // 발동 키워드 (예: "마법학교", "교장선생님")
+  content     String   // 주입될 설정 내용
+  priority    Int      @default(10) // 삽입 우선순위
+  
+  // 상태
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([characterId])
+  @@map("lorebook_entries")
 }
 
 // 채팅 세션 모델
