@@ -11,6 +11,7 @@ import { AIController } from './controllers/AIController'
 import { ImageController } from './controllers/ImageController'
 import { AdminController } from './controllers/AdminController'
 import { CharacterController } from './controllers/CharacterController'
+import { ChatController } from './controllers/ChatController'
 import { memoryController } from './controllers/MemoryController'
 import { startMemoryCleanupJob } from './jobs/memoryCleanup'
 import { authenticateToken, requireAdmin } from './middleware/auth'
@@ -86,6 +87,7 @@ const aiController = new AIController(aiService)
 const imageController = new ImageController(aiService)
 const adminController = new AdminController(prisma)
 const characterController = new CharacterController(prisma)
+const chatController = new ChatController()
 
 // UsageTracker를 AIService에 주입
 const usageTracker = getUsageTrackingService(prisma)
@@ -132,6 +134,14 @@ app.get('/api/ai/status', aiController.getServiceStatus)
 app.get('/api/characters', authenticateToken, characterController.listCharacters)
 app.get('/api/characters/:id', authenticateToken, characterController.getCharacter)
 app.post('/api/characters', authenticateToken, characterController.createCharacter)
+
+// 🆕 채팅 히스토리(유저별) API
+app.post('/api/chats/ensure', authenticateToken, chatController.ensureChatForCharacter)
+app.get('/api/chats', authenticateToken, chatController.listChats)
+app.get('/api/chats/:chatId/messages', authenticateToken, chatController.getChatMessages)
+app.post('/api/chats/:chatId/messages', authenticateToken, chatController.upsertMessage)
+app.patch('/api/chats/:chatId/messages/:messageId', authenticateToken, chatController.updateMessage)
+app.post('/api/chats/:chatId/truncate', authenticateToken, chatController.truncateAfter)
 
 // 🆕 AI 스트리밍 라우트 (SSE - Server-Sent Events)
 app.post('/api/ai/chat/stream', authenticateToken, aiController.generateCharacterResponseStream)

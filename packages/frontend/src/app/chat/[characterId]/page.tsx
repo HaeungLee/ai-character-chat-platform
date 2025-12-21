@@ -38,8 +38,14 @@ export default function CharacterChatPage() {
     const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState('')
     const [isTyping, setIsTyping] = useState(false)
+    const [chatId, setChatId] = useState<string | null>(null)
+    const [historyLoading, setHistoryLoading] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const activeStreamAbortRef = useRef<AbortController | null>(null)
+
+    const activeStreamKeyRef = useRef<string | null>(null)
+
+    const historyInitKeyRef = useRef<string | null>(null)
 
     const typewriterQueueRef = useRef<string[]>([])
     const typewriterTimerRef = useRef<number | null>(null)
@@ -341,19 +347,6 @@ export default function CharacterChatPage() {
                 if (!response.ok) throw new Error(data?.error || data?.message || '캐릭터를 불러오지 못했습니다.')
 
                 setCharacter(data.data)
-
-                // 초기 인사 메시지 1회 세팅
-                setMessages(prev => {
-                    if (prev.length) return prev
-                    return [
-                        {
-                            id: crypto.randomUUID(),
-                            role: 'assistant',
-                            content: data?.data?.greeting || '안녕하세요! 무엇을 도와드릴까요?',
-                            timestamp: new Date().toISOString(),
-                        }
-                    ]
-                })
             } catch (e) {
                 setLoadError(e instanceof Error ? e.message : '캐릭터 로드 실패')
             }
@@ -364,10 +357,138 @@ export default function CharacterChatPage() {
         }
     }, [isAuthenticated, token, characterId])
 
+    useEffect(() => {
+        // Reset per character navigation
+        resetTypewriter()
+        activeStreamAbortRef.current?.abort()
+        activeStreamAbortRef.current = null
+        setMessages([])
+        setChatId(null)
+        historyInitKeyRef.current = null
+    }, [characterId])
+
+    const apiFetch = async (path: string, init?: RequestInit) => {
+        if (!token) throw new Error('인증 토큰이 없습니다.')
+        const res = await fetch(`${API_URL}${path}`, {
+            ...init,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(init?.headers || {}),
+                Authorization: `Bearer ${token}`,
+            },
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+            const message = data?.error || data?.message || `요청 실패 (${res.status})`
+            throw new Error(message)
+        }
+        return data
+    }
+
+    const ensureChatSession = async (characterIdToEnsure: string) => {
+        const data = await apiFetch('/api/chats/ensure', {
+            method: 'POST',
+            body: JSON.stringify({ characterId: characterIdToEnsure }),
+        })
+        return data?.data?.chat as { id: string }
+    }
+
+    const loadChatMessages = async (chatIdToLoad: string) => {
+        const data = await apiFetch(`/api/chats/${chatIdToLoad}/messages?limit=200`, {
+            method: 'GET',
+        })
+
+        const raw = (data?.data || []) as Array<{
+            id: string
+            role: 'USER' | 'ASSISTANT' | 'SYSTEM'
+            content: string
+            createdAt: string
+        }>
+
+        return raw
+            .filter(m => m.role !== 'SYSTEM')
+            .map((m): Message => ({
+                id: m.id,
+                role: m.role === 'USER' ? 'user' : 'assistant',
+                content: m.content,
+                timestamp: m.createdAt,
+            }))
+    }
+
+    const upsertChatMessage = async (chatIdToSave: string, msg: Message) => {
+        const role = msg.role === 'user' ? 'USER' : 'ASSISTANT'
+        await apiFetch(`/api/chats/${chatIdToSave}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({
+                id: msg.id,
+                role,
+                content: msg.content,
+                createdAt: msg.timestamp,
+            }),
+        })
+    }
+
+    const patchChatMessage = async (chatIdToPatch: string, messageId: string, content: string) => {
+        await apiFetch(`/api/chats/${chatIdToPatch}/messages/${messageId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ content }),
+        })
+    }
+
+    const truncateChatAfter = async (chatIdToTruncate: string, afterMessageId: string) => {
+        await apiFetch(`/api/chats/${chatIdToTruncate}/truncate`, {
+            method: 'POST',
+            body: JSON.stringify({ afterMessageId }),
+        })
+    }
+
+    // 채팅 히스토리 로드/생성 (로그인 유저별)
+    useEffect(() => {
+        const initHistory = async () => {
+            if (!isAuthenticated || !token || !characterId) return
+            if (!character) return
+
+            const key = `${characterId}:${token}`
+            if (historyInitKeyRef.current === key) return
+            historyInitKeyRef.current = key
+
+            setHistoryLoading(true)
+            setLoadError(null)
+
+            try {
+                const chat = await ensureChatSession(characterId)
+                setChatId(chat.id)
+
+                const loaded = await loadChatMessages(chat.id)
+                if (loaded.length > 0) {
+                    setMessages(loaded)
+                    return
+                }
+
+                const greeting: Message = {
+                    id: crypto.randomUUID(),
+                    role: 'assistant',
+                    content: character?.greeting || '안녕하세요! 무엇을 도와드릴까요?',
+                    timestamp: new Date().toISOString(),
+                }
+                setMessages([greeting])
+                // Persist greeting so the user sees it next time too.
+                void upsertChatMessage(chat.id, greeting)
+            } catch (e) {
+                setLoadError(e instanceof Error ? e.message : '히스토리 로드 실패')
+            } finally {
+                setHistoryLoading(false)
+            }
+        }
+
+        void initHistory()
+    }, [isAuthenticated, token, characterId, character])
+
     const handleSendMessage = async (e?: React.FormEvent) => {
         e?.preventDefault()
         if (!input.trim() || isTyping) return
         if (!token) return
+        if (!chatId) return
 
         resetTypewriter()
 
@@ -383,6 +504,8 @@ export default function CharacterChatPage() {
         setInput('')
         setIsTyping(true)
 
+        void upsertChatMessage(chatId, userMsg)
+
         const assistantId = crypto.randomUUID()
         setMessages(prev => [...prev, {
             id: assistantId,
@@ -391,6 +514,9 @@ export default function CharacterChatPage() {
             timestamp: new Date().toISOString(),
             isStreaming: true,
         }])
+
+        const streamKey = crypto.randomUUID()
+        activeStreamKeyRef.current = streamKey
 
         try {
             const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = messages
@@ -403,10 +529,21 @@ export default function CharacterChatPage() {
                 token,
                 conversationHistory,
                 onChunk: (chunk) => {
+                    if (activeStreamKeyRef.current !== streamKey) return
                     enqueueTypewriterChunk(assistantId, chunk)
                 },
-                onDone: () => {
+                onDone: (full) => {
+                    if (activeStreamKeyRef.current !== streamKey) return
                     markTypewriterDone(assistantId)
+
+                    if (!full) return
+                    const assistantMsg: Message = {
+                        id: assistantId,
+                        role: 'assistant',
+                        content: full,
+                        timestamp: new Date().toISOString(),
+                    }
+                    void upsertChatMessage(chatId, assistantMsg)
                 }
             })
         } catch (err) {
@@ -419,6 +556,10 @@ export default function CharacterChatPage() {
             // If there was no streaming output, ensure cursor is stopped.
             markTypewriterDone(assistantId)
             setIsTyping(false)
+
+            if (activeStreamKeyRef.current === streamKey) {
+                activeStreamKeyRef.current = null
+            }
         }
     }
 
@@ -426,6 +567,10 @@ export default function CharacterChatPage() {
         setMessages(prev => prev.map(msg =>
             msg.id === id ? { ...msg, content: newContent } : msg
         ))
+
+        if (chatId) {
+            void patchChatMessage(chatId, id, newContent)
+        }
         // If edited user message, technically we might want to regenerate the response after it.
         // implementing that logic here simply:
         const msgIndex = messages.findIndex(m => m.id === id)
@@ -449,9 +594,17 @@ export default function CharacterChatPage() {
             return
         }
 
+        if (!chatId) {
+            setMessages(prev => prev.map(m => m.id === id ? { ...m, content: '오류: 채팅 세션이 준비되지 않았습니다. 잠시 후 다시 시도해주세요.' } : m))
+            return
+        }
+
         // Cancel any in-flight stream before starting a new one.
         activeStreamAbortRef.current?.abort()
         resetTypewriter()
+
+        const streamKey = crypto.randomUUID()
+        activeStreamKeyRef.current = streamKey
 
         // 재생성은 "바로 직전 user 메시지"를 기준으로 다시 생성합니다.
         // (해당 AI 메시지 이후의 대화는 무효화될 수 있으므로 기본적으로 잘라냅니다.)
@@ -481,6 +634,9 @@ export default function CharacterChatPage() {
 
         ;(async () => {
             try {
+                // 서버 히스토리도 UI와 동일하게 잘라줌 (해당 메시지 이후 삭제)
+                await truncateChatAfter(chatId, id).catch(() => {})
+
                 // 재생성 시 히스토리는 해당 user 메시지 이전까지(최대 20개)
                 const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = messages
                     .slice(0, prevUserIndex)
@@ -493,10 +649,23 @@ export default function CharacterChatPage() {
                     token,
                     conversationHistory,
                     onChunk: (chunk) => {
+                        if (activeStreamKeyRef.current !== streamKey) return
                         enqueueTypewriterChunk(id, chunk)
                     },
-                    onDone: () => {
+                    onDone: (full) => {
+                        if (activeStreamKeyRef.current !== streamKey) return
                         markTypewriterDone(id)
+
+                        if (!full) return
+                        void patchChatMessage(chatId, id, full).catch(async () => {
+                            const assistantMsg: Message = {
+                                id,
+                                role: 'assistant',
+                                content: full,
+                                timestamp: new Date().toISOString(),
+                            }
+                            await upsertChatMessage(chatId, assistantMsg)
+                        })
                     }
                 })
             } catch (err) {
@@ -505,6 +674,10 @@ export default function CharacterChatPage() {
             } finally {
                 markTypewriterDone(id)
                 setIsTyping(false)
+
+                if (activeStreamKeyRef.current === streamKey) {
+                    activeStreamKeyRef.current = null
+                }
             }
         })()
     }
