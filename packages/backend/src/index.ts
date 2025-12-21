@@ -134,6 +134,7 @@ app.get('/api/ai/status', aiController.getServiceStatus)
 app.get('/api/characters', authenticateToken, characterController.listCharacters)
 app.get('/api/characters/:id', authenticateToken, characterController.getCharacter)
 app.post('/api/characters', authenticateToken, characterController.createCharacter)
+app.delete('/api/characters/:id', authenticateToken, characterController.deleteCharacter)
 
 // 🆕 채팅 히스토리(유저별) API
 app.post('/api/chats/ensure', authenticateToken, chatController.ensureChatForCharacter)

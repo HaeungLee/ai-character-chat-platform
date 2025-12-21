@@ -184,4 +184,31 @@ export class CharacterController {
       res.status(500).json({ success: false, error: '캐릭터 생성에 실패했습니다.' })
     }
   }
+
+  // 캐릭터 삭제 (soft delete)
+  deleteCharacter = async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params
+
+      const existing = await this.prisma.character.findFirst({
+        where: { id, isActive: true },
+        select: { id: true },
+      })
+
+      if (!existing) {
+        return res.status(404).json({ success: false, error: '캐릭터를 찾을 수 없습니다.' })
+      }
+
+      await this.prisma.character.update({
+        where: { id },
+        data: { isActive: false },
+        select: { id: true },
+      })
+
+      return res.json({ success: true, data: { id } })
+    } catch (error) {
+      logger.error('캐릭터 삭제 실패:', error)
+      return res.status(500).json({ success: false, error: '캐릭터 삭제에 실패했습니다.' })
+    }
+  }
 }

@@ -65,6 +65,32 @@ export default function CharactersPage() {
     }
   }, [isAuthenticated, token])
 
+  const handleDeleteCharacter = async (characterId: string, characterName: string) => {
+    if (!token) return
+    const ok = window.confirm(`정말로 캐릭터를 삭제할까요?\n\n- ${characterName}\n\n삭제하면 복구할 수 없습니다.`)
+    if (!ok) return
+
+    try {
+      const response = await fetch(`${API_URL}/api/characters/${characterId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || '삭제에 실패했습니다.')
+      }
+
+      setCharacters((prev) => prev.filter((c) => c.id !== characterId))
+    } catch (e) {
+      console.error(e)
+      alert(e instanceof Error ? e.message : '삭제 중 오류가 발생했습니다.')
+    }
+  }
+
   const filteredCharacters = characters.filter(char => {
     const matchesSearch = char.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       char.personality.toLowerCase().includes(searchQuery.toLowerCase())
@@ -265,14 +291,15 @@ export default function CharactersPage() {
                   >
                     대화하기
                   </Link>
-                  <Link
-                    href={`/characters/${character.id}/edit`}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCharacter(character.id, character.name)}
                     className="py-2 px-3 rounded-lg text-sm font-medium
                       bg-[var(--secondary)] text-[var(--foreground)]
                       hover:bg-[var(--accent)] transition-colors"
                   >
-                    수정
-                  </Link>
+                    삭제
+                  </button>
                 </div>
               </div>
             ))}
