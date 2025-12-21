@@ -41,12 +41,95 @@ export default function CharacterChatPage() {
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const activeStreamAbortRef = useRef<AbortController | null>(null)
 
+    const typewriterQueueRef = useRef<string[]>([])
+    const typewriterTimerRef = useRef<number | null>(null)
+    const typewriterTargetMessageIdRef = useRef<string | null>(null)
+    const typewriterDoneRef = useRef(false)
+
     useEffect(() => {
         return () => {
             activeStreamAbortRef.current?.abort()
             activeStreamAbortRef.current = null
+
+            if (typewriterTimerRef.current !== null) {
+                window.clearInterval(typewriterTimerRef.current)
+                typewriterTimerRef.current = null
+            }
+            typewriterQueueRef.current = []
+            typewriterTargetMessageIdRef.current = null
+            typewriterDoneRef.current = false
         }
     }, [])
+
+    const resetTypewriter = () => {
+        if (typewriterTimerRef.current !== null) {
+            window.clearInterval(typewriterTimerRef.current)
+            typewriterTimerRef.current = null
+        }
+        typewriterQueueRef.current = []
+        typewriterTargetMessageIdRef.current = null
+        typewriterDoneRef.current = false
+    }
+
+    const maybeFinalizeTypewriter = () => {
+        const targetId = typewriterTargetMessageIdRef.current
+        if (!targetId) return
+
+        if (typewriterDoneRef.current && typewriterQueueRef.current.length === 0) {
+            if (typewriterTimerRef.current !== null) {
+                window.clearInterval(typewriterTimerRef.current)
+                typewriterTimerRef.current = null
+            }
+            typewriterTargetMessageIdRef.current = null
+            typewriterDoneRef.current = false
+
+            setMessages(prev => prev.map(m => m.id === targetId ? { ...m, isStreaming: false } : m))
+        }
+    }
+
+    const startTypewriter = (messageId: string) => {
+        typewriterTargetMessageIdRef.current = messageId
+        typewriterDoneRef.current = false
+
+        if (typewriterTimerRef.current !== null) return
+
+        const TICK_MS = 15
+        typewriterTimerRef.current = window.setInterval(() => {
+            const targetId = typewriterTargetMessageIdRef.current
+            if (!targetId) return
+
+            const nextChar = typewriterQueueRef.current.shift()
+            if (nextChar !== undefined) {
+                setMessages(prev => prev.map(m => m.id === targetId
+                    ? { ...m, content: (m.content || '') + nextChar }
+                    : m
+                ))
+            }
+
+            maybeFinalizeTypewriter()
+        }, TICK_MS)
+    }
+
+    const enqueueTypewriterChunk = (messageId: string, chunk: string) => {
+        if (!chunk) return
+        // If a new stream starts targeting a different message, reset and switch.
+        if (typewriterTargetMessageIdRef.current && typewriterTargetMessageIdRef.current !== messageId) {
+            resetTypewriter()
+        }
+        if (!typewriterTargetMessageIdRef.current) {
+            startTypewriter(messageId)
+        }
+        // Split into user-perceived characters (good enough for Korean; not perfect for all graphemes).
+        typewriterQueueRef.current.push(...Array.from(chunk))
+    }
+
+    const markTypewriterDone = (messageId: string) => {
+        if (typewriterTargetMessageIdRef.current !== messageId) {
+            typewriterTargetMessageIdRef.current = messageId
+        }
+        typewriterDoneRef.current = true
+        maybeFinalizeTypewriter()
+    }
 
     const streamSse = async (args: {
         characterId: string
@@ -82,6 +165,7 @@ export default function CharacterChatPage() {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        Accept: 'text/event-stream',
                         Authorization: `Bearer ${args.token}`,
                     },
                     body: JSON.stringify({
@@ -285,6 +369,8 @@ export default function CharacterChatPage() {
         if (!input.trim() || isTyping) return
         if (!token) return
 
+        resetTypewriter()
+
         const userMsg: Message = {
             id: crypto.randomUUID(),
             role: 'user',
@@ -317,13 +403,10 @@ export default function CharacterChatPage() {
                 token,
                 conversationHistory,
                 onChunk: (chunk) => {
-                    setMessages(prev => prev.map(m => m.id === assistantId
-                        ? { ...m, content: (m.content || '') + chunk }
-                        : m
-                    ))
+                    enqueueTypewriterChunk(assistantId, chunk)
                 },
                 onDone: () => {
-                    setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, isStreaming: false } : m))
+                    markTypewriterDone(assistantId)
                 }
             })
         } catch (err) {
@@ -333,6 +416,8 @@ export default function CharacterChatPage() {
                 : m
             ))
         } finally {
+            // If there was no streaming output, ensure cursor is stopped.
+            markTypewriterDone(assistantId)
             setIsTyping(false)
         }
     }
@@ -366,6 +451,7 @@ export default function CharacterChatPage() {
 
         // Cancel any in-flight stream before starting a new one.
         activeStreamAbortRef.current?.abort()
+        resetTypewriter()
 
         // 재생성은 "바로 직전 user 메시지"를 기준으로 다시 생성합니다.
         // (해당 AI 메시지 이후의 대화는 무효화될 수 있으므로 기본적으로 잘라냅니다.)
@@ -407,19 +493,17 @@ export default function CharacterChatPage() {
                     token,
                     conversationHistory,
                     onChunk: (chunk) => {
-                        setMessages(prev => prev.map(m => m.id === id
-                            ? { ...m, content: (m.content || '') + chunk }
-                            : m
-                        ))
+                        enqueueTypewriterChunk(id, chunk)
                     },
                     onDone: () => {
-                        setMessages(prev => prev.map(m => m.id === id ? { ...m, isStreaming: false } : m))
+                        markTypewriterDone(id)
                     }
                 })
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'AI 재생성 실패'
                 setMessages(prev => prev.map(m => m.id === id ? { ...m, content: `오류: ${msg}`, isStreaming: false } : m))
             } finally {
+                markTypewriterDone(id)
                 setIsTyping(false)
             }
         })()
@@ -487,15 +571,6 @@ export default function CharacterChatPage() {
                                 onRegenerate={msg.role === 'assistant' ? handleRegenerate : undefined}
                             />
                         ))}
-                        {isTyping && (
-                            <div className="flex justify-start w-full">
-                                <div className="bg-[var(--card)] border border-[var(--border)] px-4 py-3 rounded-2xl rounded-tl-sm text-sm text-[var(--muted-foreground)] flex items-center gap-2">
-                                    <span className="animate-bounce">●</span>
-                                    <span className="animate-bounce delay-100">●</span>
-                                    <span className="animate-bounce delay-200">●</span>
-                                </div>
-                            </div>
-                        )}
                         <div ref={messagesEndRef} />
                     </div>
                 </div>
