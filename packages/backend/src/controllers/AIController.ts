@@ -4,6 +4,8 @@ import { AIService } from '../services/AIService'
 import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
 import { AuthenticatedRequest } from '../middleware/auth'
+import { memoryIntegration } from '../services/memory'
+import { assembleSystemPrompt, LorebookEntry } from '../services/prompt/PromptAssembly'
 
 export class AIController {
   private aiService: AIService
@@ -15,7 +17,7 @@ export class AIController {
   // 캐릭터 채팅 응답 생성
   generateCharacterResponse = async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { characterId, message, conversationHistory, provider, model, nsfwMode } = req.body
+      const { characterId, message, conversationHistory, provider, model, nsfwMode, chatId } = req.body
       const userId = req.user?.id
 
       if (!characterId || !message) {
@@ -34,9 +36,51 @@ export class AIController {
         })
       }
 
+      const assembled = assembleSystemPrompt({
+        baseSystemPrompt: character.systemPrompt,
+        userMessage: message,
+        lorebookEntries: character.lorebookEntries,
+        exampleDialoguesJson: character.exampleDialogues,
+      })
+
+      const ragResult = await (async () => {
+        if (!userId) {
+          return {
+            systemPrompt: assembled.assembledSystemPrompt,
+            ragContext: { formattedContext: '', totalTokens: 0 },
+          }
+        }
+
+        try {
+          return await memoryIntegration.beforeMessageProcess(
+            userId,
+            character.id,
+            character.name,
+            message,
+            assembled.assembledSystemPrompt
+          )
+        } catch {
+          return {
+            systemPrompt: assembled.assembledSystemPrompt,
+            ragContext: { formattedContext: '', totalTokens: 0 },
+          }
+        }
+      })()
+
+      if (ragResult.ragContext.totalTokens > 0) {
+        logger.info('RAG 컨텍스트 주입(REST)', {
+          characterId,
+          userId,
+          ragTokens: ragResult.ragContext.totalTokens,
+        })
+      }
+
       // AI 응답 생성
       const response = await this.aiService.generateCharacterResponse(
-        character,
+        {
+          ...character,
+          systemPrompt: ragResult.systemPrompt,
+        },
         message,
         conversationHistory || [],
         {
@@ -45,6 +89,44 @@ export class AIController {
           nsfwMode,
         }
       )
+
+      // (선택) 메모리 저장
+      if (userId && typeof chatId === 'string' && chatId) {
+        const nowIso = new Date().toISOString()
+        const userMessageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+        const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+
+        void memoryIntegration
+          .afterMessageProcess(
+            {
+              id: userMessageId,
+              chatId,
+              userId,
+              characterId,
+              role: 'user',
+              content: message,
+              metadata: { source: 'rest' },
+            },
+            character.name
+          )
+          .catch(() => {})
+
+        void memoryIntegration
+          .afterMessageProcess(
+            {
+              id: assistantMessageId,
+              chatId,
+              userId,
+              characterId,
+              role: 'assistant',
+              content: response,
+              tokens: Math.ceil(response.length / 3),
+              metadata: { source: 'rest' },
+            },
+            character.name
+          )
+          .catch(() => {})
+      }
 
       // 로그 기록
       logger.info('AI 캐릭터 응답 생성 완료', {
@@ -364,7 +446,7 @@ export class AIController {
   // 🆕 캐릭터 채팅 스트리밍 응답 생성 (SSE)
   generateCharacterResponseStream = async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { characterId, message, conversationHistory, provider, model, nsfwMode } = req.body
+      const { characterId, message, conversationHistory, provider, model, nsfwMode, chatId } = req.body
       const userId = req.user?.id
 
       if (!characterId || !message) {
@@ -396,9 +478,69 @@ export class AIController {
       let fullResponse = ''
 
       try {
+        const assembled = assembleSystemPrompt({
+          baseSystemPrompt: character.systemPrompt,
+          userMessage: message,
+          lorebookEntries: character.lorebookEntries,
+          exampleDialoguesJson: character.exampleDialogues,
+        })
+
+        const ragResult = await (async () => {
+          if (!userId) {
+            return {
+              systemPrompt: assembled.assembledSystemPrompt,
+              ragContext: { formattedContext: '', totalTokens: 0 },
+            }
+          }
+
+          try {
+            return await memoryIntegration.beforeMessageProcess(
+              userId,
+              character.id,
+              character.name,
+              message,
+              assembled.assembledSystemPrompt
+            )
+          } catch {
+            return {
+              systemPrompt: assembled.assembledSystemPrompt,
+              ragContext: { formattedContext: '', totalTokens: 0 },
+            }
+          }
+        })()
+
+        if (ragResult.ragContext.totalTokens > 0) {
+          logger.info('RAG 컨텍스트 주입(SSE)', {
+            characterId,
+            userId,
+            ragTokens: ragResult.ragContext.totalTokens,
+          })
+        }
+
+        // (선택) 유저 메시지 메모리 저장
+        if (userId && typeof chatId === 'string' && chatId) {
+          void memoryIntegration
+            .afterMessageProcess(
+              {
+                id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+                chatId,
+                userId,
+                characterId,
+                role: 'user',
+                content: message,
+                metadata: { source: 'sse' },
+              },
+              character.name
+            )
+            .catch(() => {})
+        }
+
         // 스트리밍 응답 생성
         const stream = this.aiService.generateCharacterResponseStream(
-          character,
+          {
+            ...character,
+            systemPrompt: ragResult.systemPrompt,
+          },
           message,
           conversationHistory || [],
           {
@@ -422,6 +564,25 @@ export class AIController {
             estimatedTokens: Math.ceil(fullResponse.length / 4)
           }
         })}\n\n`)
+
+        // (선택) assistant 메모리 저장
+        if (userId && typeof chatId === 'string' && chatId) {
+          void memoryIntegration
+            .afterMessageProcess(
+              {
+                id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+                chatId,
+                userId,
+                characterId,
+                role: 'assistant',
+                content: fullResponse,
+                tokens: Math.ceil(fullResponse.length / 3),
+                metadata: { source: 'sse' },
+              },
+              character.name
+            )
+            .catch(() => {})
+        }
 
         logger.info('AI 캐릭터 스트리밍 응답 완료', {
           characterId,
@@ -535,15 +696,23 @@ export class AIController {
   private async getCharacterById(characterId: string) {
     const character = await prisma.character.findFirst({
       where: { id: characterId, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        personality: true,
-        systemPrompt: true,
+      include: {
+        lorebookEntries: {
+          where: { isActive: true },
+          orderBy: { priority: 'desc' },
+          select: { id: true, keys: true, content: true, priority: true },
+        },
       },
     })
 
     if (!character) return null
+
+    const lorebookEntries: LorebookEntry[] = (character.lorebookEntries || []).map((e) => ({
+      id: e.id,
+      keys: e.keys,
+      content: e.content,
+      priority: e.priority,
+    }))
 
     return {
       id: character.id,
@@ -551,6 +720,8 @@ export class AIController {
       personality: character.personality ?? '',
       systemPrompt: character.systemPrompt,
       temperature: 0.7,
+      exampleDialogues: character.exampleDialogues,
+      lorebookEntries,
     }
   }
 }

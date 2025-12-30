@@ -141,6 +141,7 @@ export default function CharacterChatPage() {
         characterId: string
         message: string
         token: string
+        chatId?: string
         conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
         onStart?: () => void
         onChunk: (chunk: string) => void
@@ -178,6 +179,7 @@ export default function CharacterChatPage() {
                         characterId: args.characterId,
                         message: args.message,
                         conversationHistory: args.conversationHistory,
+                        chatId: args.chatId,
                         provider: 'openrouter',
                     }),
                     signal: abortController.signal,
@@ -527,6 +529,7 @@ export default function CharacterChatPage() {
                 characterId,
                 message: userMsg.content,
                 token,
+                chatId,
                 conversationHistory,
                 onChunk: (chunk) => {
                     if (activeStreamKeyRef.current !== streamKey) return
@@ -647,6 +650,7 @@ export default function CharacterChatPage() {
                     characterId,
                     message: userMessage,
                     token,
+                    chatId,
                     conversationHistory,
                     onChunk: (chunk) => {
                         if (activeStreamKeyRef.current !== streamKey) return

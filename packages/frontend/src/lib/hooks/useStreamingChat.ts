@@ -51,6 +51,7 @@ export function useStreamingChat(options: UseStreamingChatOptions = {}) {
     characterId: string,
     message: string,
     conversationHistory: ChatMessage[] = [],
+    chatId?: string,
     token?: string
   ) => {
     // 이전 요청 취소
@@ -76,6 +77,7 @@ export function useStreamingChat(options: UseStreamingChatOptions = {}) {
           characterId,
           message,
           conversationHistory,
+          chatId,
         }),
         signal: abortController.signal,
       })
