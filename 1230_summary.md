@@ -1,4 +1,4 @@
-12# 1230 Summary — 구현 정리 (2025-12-30)
+# 1230 Summary — 구현 정리 (2025-12-30)
 
 목표(요약): 기존 코드베이스의 강점(SSE 스트리밍, 채팅 저장/복구, 메모리 시스템)을 **하나의 일관된 “프롬프트/컨텍스트 파이프라인”**으로 묶어, 무료/저비용에서도 텍스트 답변 품질을 안정화할 기반을 만든다.
 
@@ -59,6 +59,18 @@
 ### 빌드/안정성
 - 백엔드 `tsc` 빌드 성공.
 - 메모리/RAG 주입이 실패해도 채팅이 깨지지 않는 fail-safe 유지.
+
+### AC 자동 검증(추가)
+- Prompt Assembly AC 스크립트로 Lorebook 트리거/예시대화/하드룰을 자동 검증.
+  - packages/backend/scripts/verify_prompt_assembly_ac.js
+- Character Chat Turn(REST/SSE) AC 스크립트로 “SSE는 done 이후에만 메모리 후처리”를 자동 검증.
+  - packages/backend/scripts/verify_character_chat_turn_ac.js
+
+실행 방법
+- `cd packages/backend`
+- `npm run build`
+- `node scripts/verify_prompt_assembly_ac.js`
+- `node scripts/verify_character_chat_turn_ac.js`
 
 ---
 
