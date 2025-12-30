@@ -4,9 +4,8 @@ import { AIService } from '../services/AIService'
 import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
 import { AuthenticatedRequest } from '../middleware/auth'
-import { memoryIntegration } from '../services/memory'
 import { LorebookEntry } from '../services/prompt/PromptAssembly'
-import { buildCharacterChatSystemPrompt } from '../services/chat/CharacterChatPipeline'
+import { runCharacterChatTurnRest, runCharacterChatTurnSse } from '../services/chat/CharacterChatTurnPipeline'
 
 export class AIController {
   private aiService: AIService
@@ -37,84 +36,41 @@ export class AIController {
         })
       }
 
-      const ragResult = await buildCharacterChatSystemPrompt({
+      const result = await runCharacterChatTurnRest({
+        aiService: this.aiService,
         userId: userId || undefined,
+        chatId,
         character: {
           id: character.id,
           name: character.name,
           systemPrompt: character.systemPrompt,
+          personality: character.personality,
+          temperature: character.temperature,
           lorebookEntries: character.lorebookEntries,
           exampleDialogues: character.exampleDialogues,
         },
         userMessage: message,
-        outputLanguage: 'ko',
-      })
-
-      // AI 응답 생성
-      const response = await this.aiService.generateCharacterResponse(
-        {
-          ...character,
-          systemPrompt: ragResult.systemPrompt,
-        },
-        message,
-        conversationHistory || [],
-        {
+        conversationHistory: conversationHistory || [],
+        aiOptions: {
           provider,
           model,
           nsfwMode,
-        }
-      )
-
-      // (선택) 메모리 저장
-      if (userId && typeof chatId === 'string' && chatId) {
-        const nowIso = new Date().toISOString()
-        const userMessageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
-        const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
-
-        void memoryIntegration
-          .afterMessageProcess(
-            {
-              id: userMessageId,
-              chatId,
-              userId,
-              characterId,
-              role: 'user',
-              content: message,
-              metadata: { source: 'rest' },
-            },
-            character.name
-          )
-          .catch(() => {})
-
-        void memoryIntegration
-          .afterMessageProcess(
-            {
-              id: assistantMessageId,
-              chatId,
-              userId,
-              characterId,
-              role: 'assistant',
-              content: response,
-              tokens: Math.ceil(response.length / 3),
-              metadata: { source: 'rest' },
-            },
-            character.name
-          )
-          .catch(() => {})
-      }
+        },
+        outputLanguage: 'ko',
+      })
 
       // 로그 기록
       logger.info('AI 캐릭터 응답 생성 완료', {
         characterId,
         userId,
         messageLength: message.length,
-        responseLength: response.length,
+        responseLength: result.response.length,
       })
 
       res.json({
         success: true,
         data: {
-          response,
+          response: result.response,
           character: {
             id: character.id,
             name: character.name,
@@ -450,87 +406,43 @@ export class AIController {
       // 시작 이벤트 전송
       res.write(`data: ${JSON.stringify({ type: 'start', characterId, characterName: character.name })}\n\n`)
 
-      let fullResponse = ''
-
       try {
-        const ragResult = await buildCharacterChatSystemPrompt({
+        const stream = runCharacterChatTurnSse({
+          aiService: this.aiService,
           userId: userId || undefined,
+          chatId,
           character: {
             id: character.id,
             name: character.name,
             systemPrompt: character.systemPrompt,
+            personality: character.personality,
+            temperature: character.temperature,
             lorebookEntries: character.lorebookEntries,
             exampleDialogues: character.exampleDialogues,
           },
           userMessage: message,
-          outputLanguage: 'ko',
-        })
-
-        // (선택) 유저 메시지 메모리 저장
-        if (userId && typeof chatId === 'string' && chatId) {
-          void memoryIntegration
-            .afterMessageProcess(
-              {
-                id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-                chatId,
-                userId,
-                characterId,
-                role: 'user',
-                content: message,
-                metadata: { source: 'sse' },
-              },
-              character.name
-            )
-            .catch(() => {})
-        }
-
-        // 스트리밍 응답 생성
-        const stream = this.aiService.generateCharacterResponseStream(
-          {
-            ...character,
-            systemPrompt: ragResult.systemPrompt,
-          },
-          message,
-          conversationHistory || [],
-          {
+          conversationHistory: conversationHistory || [],
+          aiOptions: {
             provider,
             model,
             nsfwMode,
+          },
+          outputLanguage: 'ko',
+        })
+
+        let fullResponse = ''
+        for await (const evt of stream) {
+          if (evt.type === 'chunk') {
+            fullResponse += evt.content
+            res.write(`data: ${JSON.stringify({ type: 'chunk', content: evt.content })}\n\n`)
+          } else if (evt.type === 'done') {
+            fullResponse = evt.fullResponse
+            res.write(`data: ${JSON.stringify({ 
+              type: 'done', 
+              fullResponse,
+              usage: evt.usage,
+            })}\n\n`)
           }
-        )
-
-        for await (const chunk of stream) {
-          fullResponse += chunk
-          // 청크 데이터 전송
-          res.write(`data: ${JSON.stringify({ type: 'chunk', content: chunk })}\n\n`)
-        }
-
-        // 완료 이벤트 전송
-        res.write(`data: ${JSON.stringify({ 
-          type: 'done', 
-          fullResponse,
-          usage: {
-            estimatedTokens: Math.ceil(fullResponse.length / 4)
-          }
-        })}\n\n`)
-
-        // (선택) assistant 메모리 저장
-        if (userId && typeof chatId === 'string' && chatId) {
-          void memoryIntegration
-            .afterMessageProcess(
-              {
-                id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-                chatId,
-                userId,
-                characterId,
-                role: 'assistant',
-                content: fullResponse,
-                tokens: Math.ceil(fullResponse.length / 3),
-                metadata: { source: 'sse' },
-              },
-              character.name
-            )
-            .catch(() => {})
         }
 
         logger.info('AI 캐릭터 스트리밍 응답 완료', {
