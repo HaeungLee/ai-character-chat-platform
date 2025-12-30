@@ -50,6 +50,10 @@ function parseArgs(argv) {
     }
 
     const key = a.slice(2)
+    if (key === 'help' || key === 'h') {
+      args.help = true
+      continue
+    }
     if (key === 'noCall') {
       args.noCall = true
       continue
@@ -64,6 +68,151 @@ function parseArgs(argv) {
     i++
   }
   return args
+}
+
+function printUsage() {
+  process.stderr.write(
+    [
+      'Usage:',
+      '  node scripts/preview_prompt_and_sample_llm.js --characterId <id> --message "..." [--model ...] [--repeat N] [--delayMs MS]',
+      '',
+      'Options:',
+      '  --noCall                 Only prints prompts (no LLM call)',
+      '  --userId <userId>        If provided, will try RAG injection (memoryIntegration.beforeMessageProcess)',
+      '  --chatId <chatId>        If provided with userId, will run afterMessageProcess after LLM',
+      '',
+      'Automated checks (optional):',
+      '  --checkKorean            Fail if response contains Latin/Han/Japanese scripts (strict by default)',
+      '  --koreanMinRatio 0.90    Hangul ratio among letter-like scripts (fallback safety)',
+      '  --foreignMaxCount 0      Allow up to N foreign-script characters before failing',
+      '  --checkRepetition        Fail on repeated identical non-empty lines (default: on if --checkKorean)',
+      '  --maxRepeatedLine 3      Fail if any identical line repeats >= N times',
+      '  --checkNoMeta            Fail if response contains prompt/meta leakage keywords',
+      '  --failFast               Stop at first failing sample',
+      '',
+      'Examples:',
+      '  node scripts/preview_prompt_and_sample_llm.js --characterId cmjf... --message "용 이야기" --noCall',
+      '  node scripts/preview_prompt_and_sample_llm.js --characterId cmjf... --message "용 이야기" --model meta-llama/llama-3.2-3b-instruct:free --repeat 3 --delayMs 900 --checkKorean --checkRepetition',
+      '',
+    ].join('\n')
+  )
+}
+
+function analyzeLanguage(text) {
+  // We only care about broad script leakage for quick QA.
+  // Node supports Unicode property escapes in regex.
+  const reHangul = /\p{Script=Hangul}/u
+  const reHan = /\p{Script=Han}/u
+  const reHira = /\p{Script=Hiragana}/u
+  const reKata = /\p{Script=Katakana}/u
+  const reLatin = /[A-Za-z]/
+
+  let hangul = 0
+  let han = 0
+  let hira = 0
+  let kata = 0
+  let latin = 0
+
+  for (const ch of text) {
+    if (reHangul.test(ch)) hangul++
+    else if (reLatin.test(ch)) latin++
+    else if (reHan.test(ch)) han++
+    else if (reHira.test(ch)) hira++
+    else if (reKata.test(ch)) kata++
+  }
+
+  const foreign = latin + han + hira + kata
+  const letterLike = hangul + foreign
+  const hangulRatio = letterLike > 0 ? hangul / letterLike : 1
+
+  return {
+    hangul,
+    latin,
+    han,
+    hira,
+    kata,
+    foreign,
+    letterLike,
+    hangulRatio,
+  }
+}
+
+function analyzeRepetitionByLine(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const counts = new Map()
+  for (const line of lines) {
+    counts.set(line, (counts.get(line) || 0) + 1)
+  }
+
+  let maxCount = 0
+  let maxLine = ''
+  for (const [line, count] of counts.entries()) {
+    if (count > maxCount) {
+      maxCount = count
+      maxLine = line
+    }
+  }
+
+  return { maxCount, maxLine, uniqueLines: counts.size, totalLines: lines.length }
+}
+
+function containsMetaLeak(text) {
+  // Optional: conservative list; can be extended later.
+  const keywords = [
+    '시스템',
+    '개발자',
+    '프롬프트',
+    '정책',
+    '메모리',
+    'HARD_RULES',
+    'SYSTEM',
+    'DEVELOPER',
+    'PROMPT',
+    'POLICY',
+  ]
+  return keywords.some((k) => text.includes(k))
+}
+
+function runAutoChecks(text, options) {
+  const results = []
+  let ok = true
+
+  if (options.checkKorean) {
+    const lang = analyzeLanguage(text)
+    const passedRatio = lang.hangulRatio >= options.koreanMinRatio
+    const passedForeignCount = lang.foreign <= options.foreignMaxCount
+    const passed = passedRatio && passedForeignCount
+
+    results.push({
+      name: 'korean_only',
+      passed,
+      detail: `hangulRatio=${lang.hangulRatio.toFixed(3)} foreign=${lang.foreign} (latin=${lang.latin}, han=${lang.han}, hira=${lang.hira}, kata=${lang.kata})`,
+    })
+    if (!passed) ok = false
+  }
+
+  if (options.checkRepetition) {
+    const rep = analyzeRepetitionByLine(text)
+    const passed = rep.maxCount < options.maxRepeatedLine
+    results.push({
+      name: 'no_repeated_lines',
+      passed,
+      detail: `maxLineRepeat=${rep.maxCount} uniqueLines=${rep.uniqueLines} totalLines=${rep.totalLines}${rep.maxCount > 1 ? ` sampleLine=${JSON.stringify(rep.maxLine).slice(0, 140)}` : ''}`,
+    })
+    if (!passed) ok = false
+  }
+
+  if (options.checkNoMeta) {
+    const passed = !containsMetaLeak(text)
+    results.push({ name: 'no_meta_leak', passed, detail: passed ? 'ok' : 'meta keyword detected' })
+    if (!passed) ok = false
+  }
+
+  return { ok, results }
 }
 
 function sleep(ms) {
@@ -108,6 +257,11 @@ async function withRetry429(fn, options) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
 
+  if (args.help) {
+    printUsage()
+    return 0
+  }
+
   const characterId = args.characterId
   const message = args.message
   const model = args.model || process.env.OPENROUTER_DEFAULT_MODEL || 'meta-llama/llama-3.2-3b-instruct:free'
@@ -117,15 +271,25 @@ async function main() {
   const userId = args.userId
   const chatId = args.chatId
 
+  const checkKorean = !!args.checkKorean
+  const koreanMinRatio = pickNumber(args.koreanMinRatio, 0.9)
+  const foreignMaxCount = pickNumber(args.foreignMaxCount, 0)
+  const checkRepetition = args.checkRepetition === undefined ? checkKorean : !!args.checkRepetition
+  const maxRepeatedLine = pickNumber(args.maxRepeatedLine, 3)
+  const checkNoMeta = !!args.checkNoMeta
+  const failFast = !!args.failFast
+
   if (!characterId || !message) {
-    process.stderr.write('Usage: node scripts/preview_prompt_and_sample_llm.js --characterId <id> --message "..." [--model ...]\n')
-    process.exit(2)
+    printUsage()
+    return 2
   }
 
   const { prisma } = requireFromDist('config/database.js')
   const { assembleSystemPrompt } = requireFromDist('services/prompt/PromptAssembly.js')
   const { memoryIntegration } = requireFromDist('services/memory/index.js')
   const { OpenRouterService } = requireFromDist('services/ai/OpenRouterService.js')
+
+  let exitCode = 0
 
   try {
     const dbCharacter = await prisma.character.findFirst({
@@ -198,7 +362,7 @@ async function main() {
 
     if (noCall) {
       process.stdout.write('Skipping LLM call (--noCall).\n')
-      return
+      return exitCode
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY
@@ -210,6 +374,8 @@ async function main() {
       siteName: process.env.OPENROUTER_SITE_NAME,
       defaultModel: process.env.OPENROUTER_DEFAULT_MODEL,
     })
+
+    let hadCheckFailures = false
 
     for (let i = 0; i < repeat; i++) {
       if (i > 0) {
@@ -233,6 +399,32 @@ async function main() {
       process.stdout.write(responseText)
       process.stdout.write('\n\n')
 
+      if (checkKorean || checkRepetition || checkNoMeta) {
+        const check = runAutoChecks(responseText, {
+          checkKorean,
+          koreanMinRatio,
+          foreignMaxCount,
+          checkRepetition,
+          maxRepeatedLine,
+          checkNoMeta,
+        })
+
+        process.stdout.write('--- Auto Checks ---\n')
+        for (const r of check.results) {
+          process.stdout.write(`${r.passed ? 'PASS' : 'FAIL'} ${r.name}: ${r.detail}\n`)
+        }
+        process.stdout.write('\n')
+
+        if (!check.ok) {
+          hadCheckFailures = true
+          exitCode = 1
+          if (failFast) {
+            process.stdout.write('Stopping early (--failFast) due to check failure.\n\n')
+            break
+          }
+        }
+      }
+
       // Optional: run memory after-process once we have the final response.
       if (userId && chatId) {
         void memoryIntegration
@@ -252,12 +444,24 @@ async function main() {
           .catch(() => {})
       }
     }
+
+    if (exitCode === 0) {
+      process.stdout.write('OK\n')
+    } else {
+      process.stderr.write('One or more samples failed automated checks.\n')
+    }
   } finally {
     await prisma.$disconnect().catch(() => {})
   }
+
+  return exitCode
 }
 
-main().catch((err) => {
-  process.stderr.write(`${err && err.stack ? err.stack : String(err)}\n`)
-  process.exit(1)
-})
+main()
+  .then((code) => {
+    process.exit(Number.isFinite(code) ? code : 0)
+  })
+  .catch((err) => {
+    process.stderr.write(`${err && err.stack ? err.stack : String(err)}\n`)
+    process.exit(1)
+  })
