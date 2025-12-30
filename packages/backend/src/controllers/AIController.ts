@@ -5,7 +5,8 @@ import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
 import { AuthenticatedRequest } from '../middleware/auth'
 import { memoryIntegration } from '../services/memory'
-import { assembleSystemPrompt, LorebookEntry } from '../services/prompt/PromptAssembly'
+import { LorebookEntry } from '../services/prompt/PromptAssembly'
+import { buildCharacterChatSystemPrompt } from '../services/chat/CharacterChatPipeline'
 
 export class AIController {
   private aiService: AIService
@@ -36,44 +37,18 @@ export class AIController {
         })
       }
 
-      const assembled = assembleSystemPrompt({
-        baseSystemPrompt: character.systemPrompt,
+      const ragResult = await buildCharacterChatSystemPrompt({
+        userId: userId || undefined,
+        character: {
+          id: character.id,
+          name: character.name,
+          systemPrompt: character.systemPrompt,
+          lorebookEntries: character.lorebookEntries,
+          exampleDialogues: character.exampleDialogues,
+        },
         userMessage: message,
-        lorebookEntries: character.lorebookEntries,
-        exampleDialoguesJson: character.exampleDialogues,
+        outputLanguage: 'ko',
       })
-
-      const ragResult = await (async () => {
-        if (!userId) {
-          return {
-            systemPrompt: assembled.assembledSystemPrompt,
-            ragContext: { formattedContext: '', totalTokens: 0 },
-          }
-        }
-
-        try {
-          return await memoryIntegration.beforeMessageProcess(
-            userId,
-            character.id,
-            character.name,
-            message,
-            assembled.assembledSystemPrompt
-          )
-        } catch {
-          return {
-            systemPrompt: assembled.assembledSystemPrompt,
-            ragContext: { formattedContext: '', totalTokens: 0 },
-          }
-        }
-      })()
-
-      if (ragResult.ragContext.totalTokens > 0) {
-        logger.info('RAG 컨텍스트 주입(REST)', {
-          characterId,
-          userId,
-          ragTokens: ragResult.ragContext.totalTokens,
-        })
-      }
 
       // AI 응답 생성
       const response = await this.aiService.generateCharacterResponse(
@@ -478,44 +453,18 @@ export class AIController {
       let fullResponse = ''
 
       try {
-        const assembled = assembleSystemPrompt({
-          baseSystemPrompt: character.systemPrompt,
+        const ragResult = await buildCharacterChatSystemPrompt({
+          userId: userId || undefined,
+          character: {
+            id: character.id,
+            name: character.name,
+            systemPrompt: character.systemPrompt,
+            lorebookEntries: character.lorebookEntries,
+            exampleDialogues: character.exampleDialogues,
+          },
           userMessage: message,
-          lorebookEntries: character.lorebookEntries,
-          exampleDialoguesJson: character.exampleDialogues,
+          outputLanguage: 'ko',
         })
-
-        const ragResult = await (async () => {
-          if (!userId) {
-            return {
-              systemPrompt: assembled.assembledSystemPrompt,
-              ragContext: { formattedContext: '', totalTokens: 0 },
-            }
-          }
-
-          try {
-            return await memoryIntegration.beforeMessageProcess(
-              userId,
-              character.id,
-              character.name,
-              message,
-              assembled.assembledSystemPrompt
-            )
-          } catch {
-            return {
-              systemPrompt: assembled.assembledSystemPrompt,
-              ragContext: { formattedContext: '', totalTokens: 0 },
-            }
-          }
-        })()
-
-        if (ragResult.ragContext.totalTokens > 0) {
-          logger.info('RAG 컨텍스트 주입(SSE)', {
-            characterId,
-            userId,
-            ragTokens: ragResult.ragContext.totalTokens,
-          })
-        }
 
         // (선택) 유저 메시지 메모리 저장
         if (userId && typeof chatId === 'string' && chatId) {
