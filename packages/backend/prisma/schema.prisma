@@ -416,6 +416,7 @@ model SemanticMemory {
   @@index([category])
   @@index([key])
   @@index([importance])
+  @@unique([configId, key])
   @@map("semantic_memories")
 }
 

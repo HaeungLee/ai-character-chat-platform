@@ -276,13 +276,21 @@ export class MemoryService {
   ): Promise<SemanticMemoryData> {
     const config = await this.getOrCreateConfig(userId, characterId)
 
+    const configRow = await prisma.characterMemoryConfig.findUnique({
+      where: { userId_characterId: { userId, characterId } }
+    })
+
+    if (!configRow) {
+      throw new Error('메모리 설정을 찾을 수 없습니다')
+    }
+
     // 동일한 key가 있으면 업데이트
-    const existing = await prisma.semanticMemory.findFirst({
+    const existing = await prisma.semanticMemory.findUnique({
       where: {
-        configId: (await prisma.characterMemoryConfig.findUnique({
-          where: { userId_characterId: { userId, characterId } }
-        }))!.id,
-        key: data.key
+        configId_key: {
+          configId: configRow.id,
+          key: data.key
+        }
       }
     })
 
@@ -316,9 +324,7 @@ export class MemoryService {
 
     const memory = await prisma.semanticMemory.create({
       data: {
-        configId: (await prisma.characterMemoryConfig.findUnique({
-          where: { userId_characterId: { userId, characterId } }
-        }))!.id,
+        configId: configRow.id,
         category: data.category,
         key: data.key,
         value: data.value,
