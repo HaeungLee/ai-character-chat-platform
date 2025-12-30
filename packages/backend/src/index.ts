@@ -128,6 +128,7 @@ app.get('/api/auth/verify', authenticateToken, AuthController.verifyToken)
 // AI API 라우트
 app.post('/api/ai/chat', authenticateToken, aiController.generateCharacterResponse)
 app.post('/api/ai/generate', authenticateToken, aiController.generateChatResponse)
+app.post('/api/ai/chat/preview', authenticateToken, aiController.previewCharacterChatPrompt)
 app.get('/api/ai/status', aiController.getServiceStatus)
 
 // 캐릭터 API 라우트

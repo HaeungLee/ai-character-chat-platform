@@ -4,8 +4,9 @@ import { AIService } from '../services/AIService'
 import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
 import { AuthenticatedRequest } from '../middleware/auth'
-import { LorebookEntry } from '../services/prompt/PromptAssembly'
+import { assembleSystemPrompt, LorebookEntry } from '../services/prompt/PromptAssembly'
 import { runCharacterChatTurnRest, runCharacterChatTurnSse } from '../services/chat/CharacterChatTurnPipeline'
+import { memoryIntegration } from '../services/memory'
 
 export class AIController {
   private aiService: AIService
@@ -83,6 +84,110 @@ export class AIController {
         success: false,
         error: 'AI 응답 생성 중 오류가 발생했습니다.',
       })
+    }
+  }
+
+  // 🆕 캐릭터 채팅 프롬프트/컨텍스트 프리뷰 (LLM 호출 없음)
+  previewCharacterChatPrompt = async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        characterId,
+        message,
+        includeRag = true,
+        outputLanguage = 'ko',
+        maxLorebookEntries,
+        maxExamplesChars,
+        includeHardRules,
+      } = req.body as {
+        characterId?: string
+        message?: string
+        includeRag?: boolean
+        outputLanguage?: 'ko' | 'en'
+        maxLorebookEntries?: number
+        maxExamplesChars?: number
+        includeHardRules?: boolean
+      }
+
+      const userId = req.user?.id
+
+      if (!characterId || typeof characterId !== 'string') {
+        return res.status(400).json({ success: false, error: 'characterId는 필수입니다.' })
+      }
+
+      if (!message || typeof message !== 'string') {
+        return res.status(400).json({ success: false, error: 'message는 필수입니다.' })
+      }
+
+      const character = await this.getCharacterById(characterId)
+      if (!character) {
+        return res.status(404).json({ success: false, error: '캐릭터를 찾을 수 없습니다.' })
+      }
+
+      const assembled = assembleSystemPrompt({
+        baseSystemPrompt: character.systemPrompt,
+        userMessage: message,
+        lorebookEntries: character.lorebookEntries,
+        exampleDialoguesJson: character.exampleDialogues,
+        options: {
+          outputLanguage,
+          ...(typeof maxLorebookEntries === 'number' ? { maxLorebookEntries } : {}),
+          ...(typeof maxExamplesChars === 'number' ? { maxExamplesChars } : {}),
+          ...(typeof includeHardRules === 'boolean' ? { includeHardRules } : {}),
+        },
+      })
+
+      let finalSystemPrompt = assembled.assembledSystemPrompt
+      let ragContext: { formattedContext: string; totalTokens: number } = { formattedContext: '', totalTokens: 0 }
+      let ragError: string | null = null
+
+      if (includeRag && userId) {
+        try {
+          const ragResult = await memoryIntegration.beforeMessageProcess(
+            userId,
+            character.id,
+            character.name,
+            message,
+            assembled.assembledSystemPrompt
+          )
+          finalSystemPrompt = ragResult.systemPrompt
+          ragContext = ragResult.ragContext
+        } catch (e) {
+          ragError = e instanceof Error ? e.message : 'RAG 주입 실패'
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          character: { id: character.id, name: character.name },
+          input: {
+            message,
+            includeRag: !!includeRag,
+            outputLanguage,
+            maxLorebookEntries: typeof maxLorebookEntries === 'number' ? maxLorebookEntries : null,
+            maxExamplesChars: typeof maxExamplesChars === 'number' ? maxExamplesChars : null,
+            includeHardRules: typeof includeHardRules === 'boolean' ? includeHardRules : null,
+          },
+          assembly: {
+            usedLorebookEntries: assembled.usedLorebookEntries,
+            usedLorebookEntryIds: assembled.usedLorebookEntries.map((e) => e.id),
+            usedExamplesCount: assembled.usedExamples.length,
+          },
+          prompts: {
+            assembledSystemPrompt: assembled.assembledSystemPrompt,
+            finalSystemPrompt,
+          },
+          rag: {
+            totalTokens: ragContext.totalTokens,
+            formattedContext: ragContext.formattedContext,
+            error: ragError,
+          },
+          note: 'This endpoint does not call the LLM. Use /api/ai/chat or /api/ai/chat/stream for actual responses.',
+        },
+      })
+    } catch (error) {
+      logger.error('프롬프트 프리뷰 생성 실패:', error)
+      return res.status(500).json({ success: false, error: '프롬프트 프리뷰 생성 중 오류가 발생했습니다.' })
     }
   }
 

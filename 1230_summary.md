@@ -72,6 +72,12 @@
 - `node scripts/verify_prompt_assembly_ac.js`
 - `node scripts/verify_character_chat_turn_ac.js`
 
+### 프롬프트 프리뷰/샘플(추가)
+- 엔드포인트(LLM 호출 없음): `POST /api/ai/chat/preview`
+  - 최종 system prompt(옵션 RAG 포함), 트리거된 로어북/예시대화 수 등을 반환
+- 로컬 스크립트(옵션 LLM 호출):
+  - packages/backend/scripts/preview_prompt_and_sample_llm.js
+
 ---
 
 ## 왜 이렇게 구현했는지 (최소 복잡성 원칙)
