@@ -6,6 +6,7 @@ import { memoryIntegration } from './memory'
 import { ChatMessageModel } from '../models/memory'
 import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
+import { runCharacterChatTurnSse } from './chat/CharacterChatTurnPipeline'
 
 // =====================================================
 // 타입 정의
@@ -743,38 +744,6 @@ export class SocketService {
         const chatId = roomId
         const aiMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-        // 사용자 메시지 메모리 처리
-        try {
-          await memoryIntegration.afterMessageProcess(
-            {
-              id: userMessageId,
-              chatId,
-              userId,
-              characterId,
-              role: 'user',
-              content
-            },
-            character.name
-          )
-        } catch (memError) {
-          logger.warn('사용자 메시지 메모리 처리 실패:', memError)
-        }
-
-        // RAG 컨텍스트 가져오기
-        let enhancedSystemPrompt = character.systemPrompt
-        try {
-          const ragResult = await memoryIntegration.beforeMessageProcess(
-            userId,
-            characterId,
-            character.name,
-            content,
-            character.systemPrompt
-          )
-          enhancedSystemPrompt = ragResult.systemPrompt
-        } catch (ragError) {
-          logger.warn('RAG 컨텍스트 가져오기 실패:', ragError)
-        }
-
         // 스트리밍 시작 알림
         this.io.to(roomId).emit('message:stream:start', {
           id: aiMessageId,
@@ -794,26 +763,43 @@ export class SocketService {
         let fullResponse = ''
 
         try {
-          const enhancedCharacter = {
-            ...character,
-            systemPrompt: enhancedSystemPrompt
-          }
+          const stream = runCharacterChatTurnSse({
+            aiService: this.aiService,
+            userId,
+            chatId,
+            character: {
+              id: character.id,
+              name: character.name,
+              systemPrompt: character.systemPrompt,
+              personality: character.personality,
+              temperature: character.temperature,
+              lorebookEntries: character.lorebookEntries,
+              exampleDialogues: character.exampleDialogues,
+            },
+            userMessage: content,
+            conversationHistory,
+            aiOptions: {
+              provider: 'openrouter',
+              model: data.model || process.env.OPENROUTER_DEFAULT_MODEL,
+              nsfwMode: process.env.ENABLE_NSFW === 'true',
+            },
+            outputLanguage: 'ko',
+          })
 
-          const stream = this.aiService.generateCharacterResponseStream(
-            enhancedCharacter,
-            content,
-            conversationHistory
-          )
+          for await (const ev of stream) {
+            if (ev.type === 'chunk') {
+              fullResponse += ev.content
+              this.io.to(roomId).emit('message:stream:chunk', {
+                id: aiMessageId,
+                chunk: ev.content,
+                characterId,
+                roomId,
+                timestamp: new Date().toISOString(),
+              })
+              continue
+            }
 
-          for await (const chunk of stream) {
-            fullResponse += chunk
-            this.io.to(roomId).emit('message:stream:chunk', {
-              id: aiMessageId,
-              chunk,
-              characterId,
-              roomId,
-              timestamp: new Date().toISOString(),
-            })
+            fullResponse = ev.fullResponse
           }
 
           // 스트리밍 완료
@@ -831,24 +817,6 @@ export class SocketService {
             },
           })
 
-          // AI 응답 메모리 저장
-          try {
-            await memoryIntegration.afterMessageProcess(
-              {
-                id: aiMessageId,
-                chatId,
-                userId,
-                characterId,
-                role: 'assistant',
-                content: fullResponse,
-                tokens: Math.ceil(fullResponse.length / 3)
-              },
-              character.name
-            )
-          } catch (memError) {
-            logger.warn('AI 응답 메모리 처리 실패:', memError)
-          }
-
           logger.info(`AI streaming completed: ${aiMessageId}`)
 
         } catch (streamError) {
@@ -860,6 +828,24 @@ export class SocketService {
             error: 'AI 응답 생성 중 오류가 발생했습니다.',
             timestamp: new Date().toISOString(),
           })
+
+          // Best-effort: if the stream failed before completion, at least persist the user message memory.
+          try {
+            await memoryIntegration.afterMessageProcess(
+              {
+                id: userMessageId,
+                chatId,
+                userId,
+                characterId,
+                role: 'user',
+                content,
+                metadata: { source: 'socket_error' },
+              },
+              character.name
+            )
+          } catch {
+            // ignore
+          }
         }
 
         this.io.to(roomId).emit('typing:stop', {
@@ -1201,11 +1187,12 @@ export class SocketService {
     // 여기서는 샘플 데이터 반환
     const character = await prisma.character.findFirst({
       where: { id: characterId, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        personality: true,
-        systemPrompt: true,
+      include: {
+        lorebookEntries: {
+          where: { isActive: true },
+          orderBy: { priority: 'desc' },
+          select: { id: true, keys: true, content: true, priority: true },
+        },
       },
     })
 
@@ -1216,6 +1203,13 @@ export class SocketService {
       name: character.name,
       personality: character.personality ?? '',
       systemPrompt: character.systemPrompt,
+      exampleDialogues: character.exampleDialogues ?? null,
+      lorebookEntries: (character.lorebookEntries || []).map((e) => ({
+        id: e.id,
+        keys: e.keys,
+        content: e.content,
+        priority: e.priority,
+      })),
       temperature: 0.7,
     }
   }

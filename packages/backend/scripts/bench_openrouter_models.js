@@ -481,6 +481,11 @@ async function main() {
       })
 
     const finalList = topN > 0 ? filtered.slice(0, topN) : filtered
+    const excludedByMinPassRate = results
+      .filter((r) => r.passRate < minPassRate)
+      .sort((a, b) => a.passRate - b.passRate)
+
+    const excludedByTopN = topN > 0 ? filtered.slice(topN) : []
 
     process.stdout.write('=== Summary (ranked) ===\n')
     const header = [
@@ -510,6 +515,22 @@ async function main() {
     }
     if (topN > 0) {
       process.stdout.write(`topN=${topN}\n`)
+    }
+
+    if (excludedByMinPassRate.length > 0) {
+      process.stdout.write('\n=== Excluded (minPassRate) ===\n')
+      for (const r of excludedByMinPassRate) {
+        const note = r.failNotes && r.failNotes.length > 0 ? r.failNotes[0] : ''
+        process.stdout.write(`${(r.passRate * 100).toFixed(0)}%  ${r.pass}/${r.fail}  ${r.model}${note ? `  (${note})` : ''}\n`)
+      }
+    }
+
+    if (excludedByTopN.length > 0) {
+      process.stdout.write('\n=== Excluded (topN cutoff) ===\n')
+      for (const r of excludedByTopN) {
+        const note = r.failNotes && r.failNotes.length > 0 ? r.failNotes[0] : ''
+        process.stdout.write(`${(r.passRate * 100).toFixed(0)}%  ${r.pass}/${r.fail}  ${r.model}${note ? `  (${note})` : ''}\n`)
+      }
     }
 
     process.stdout.write('\nOK\n')
