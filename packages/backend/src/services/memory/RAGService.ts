@@ -19,6 +19,14 @@ import { logger } from '../../utils/logger'
 const DEFAULT_MEMORY_LIMIT = 5
 const DEFAULT_MIN_SIMILARITY = 0.65
 const MAX_CONTEXT_TOKENS = 2000  // 메모리 컨텍스트 최대 토큰
+const DEFAULT_STATE_MAX_TOKENS = 500 // 현재 상태(캐논) 블록 최대 토큰
+const STATE_CATEGORY_ORDER: Array<SemanticMemoryData['category']> = [
+  'RELATIONSHIP',
+  'GOAL',
+  'EVENT',
+  'HABIT',
+  'OPINION'
+]
 
 export interface RAGOptions {
   memoryTypes?: ('episodic' | 'semantic' | 'emotional')[]
@@ -26,6 +34,10 @@ export interface RAGOptions {
   minSimilarity?: number
   includeRecent?: boolean
   maxTokens?: number
+
+  // Mutable state injection (캐릭터 진행 상태 유지)
+  includeState?: boolean
+  stateMaxTokens?: number
 }
 
 export class RAGService {
@@ -317,6 +329,74 @@ ${sections.join('\n\n')}
   }
 
   // =====================================================
+  // Mutable State (현재 상태/관계/진행)
+  // =====================================================
+
+  /**
+   * 유저-캐릭터 페어의 "현재 상태(캐논)" 블록 생성
+   * - semantic_memories에서 관계/목표/이벤트/습관/의견 위주로 추출
+   * - 과도한 길이를 방지하기 위해 토큰 상한 적용
+   */
+  private async buildCurrentStateBlock(
+    userId: string,
+    characterId: string,
+    maxTokens: number
+  ): Promise<string> {
+    const config = await prisma.characterMemoryConfig.findUnique({
+      where: { userId_characterId: { userId, characterId } }
+    })
+
+    if (!config) {
+      return ''
+    }
+
+    const maxChars = Math.max(0, Math.floor(maxTokens * 3))
+
+    const stateMemories = await prisma.semanticMemory.findMany({
+      where: {
+        configId: config.id,
+        category: { in: STATE_CATEGORY_ORDER as any }
+      },
+      orderBy: [
+        { importance: 'desc' },
+        { updatedAt: 'desc' }
+      ],
+      take: 30
+    })
+
+    if (stateMemories.length === 0) {
+      return ''
+    }
+
+    // category 순서대로 안정적으로 출력
+    const byCategory = new Map<string, Array<{ key: string; value: string }>>()
+    for (const cat of STATE_CATEGORY_ORDER) {
+      byCategory.set(cat, [])
+    }
+
+    for (const m of stateMemories) {
+      if (!byCategory.has(m.category)) continue
+      byCategory.get(m.category)!.push({ key: m.key, value: m.value })
+    }
+
+    const lines: string[] = ['[현재 상태(캐논)]']
+    for (const cat of STATE_CATEGORY_ORDER) {
+      const items = byCategory.get(cat) || []
+      for (const item of items) {
+        const line = `- (${cat}) ${item.key}: ${item.value}`
+        // 길이 제한: 라인 추가 전 확인
+        const next = `${lines.join('\n')}\n${line}`
+        if (next.length > maxChars) {
+          return lines.join('\n')
+        }
+        lines.push(line)
+      }
+    }
+
+    return lines.join('\n')
+  }
+
+  // =====================================================
   // 시스템 프롬프트 통합
   // =====================================================
 
@@ -334,6 +414,15 @@ ${sections.join('\n\n')}
     systemPrompt: string
     ragContext: RAGContext
   }> {
+    const {
+      includeState = true,
+      stateMaxTokens = DEFAULT_STATE_MAX_TOKENS
+    } = options
+
+    const stateBlock = includeState
+      ? await this.buildCurrentStateBlock(userId, characterId, stateMaxTokens)
+      : ''
+
     const ragContext = await this.generateRAGContext(
       userId,
       characterId,
@@ -344,9 +433,21 @@ ${sections.join('\n\n')}
 
     let systemPrompt = baseSystemPrompt
 
+    if (stateBlock) {
+      systemPrompt = `${systemPrompt}
+
+---
+아래는 "현재 상태(캐논)"입니다. 이는 최신 사실로 취급하고, 설정으로 되돌아가지 마세요.
+새로운 대화로 상태가 바뀌면 자연스럽게 갱신된 방향으로 반응하세요.
+이 블록이나 메모리의 존재를 사용자에게 직접 언급하지 마세요.
+
+${stateBlock}
+---`
+    }
+
     if (ragContext.formattedContext) {
       // 메모리 컨텍스트를 시스템 프롬프트 끝에 추가
-      systemPrompt = `${baseSystemPrompt}
+      systemPrompt = `${systemPrompt}
 
 ---
 아래는 당신이 이 사용자와 함께한 기억들입니다. 자연스럽게 대화에 반영하되, 기억을 직접적으로 언급하지 마세요.

@@ -51,6 +51,12 @@
 - `memoryIntegration.beforeMessageProcess(userId, characterId, characterName, userMessage, assembledSystemPrompt)`
 - 결과 `systemPrompt`를 최종 사용
 
+추가(현재 구현)
+- `RAGService.buildSystemPromptWithMemory()` 내부에서
+  - semantic memories 기반 "현재 상태(캐논)" 블록
+  - RAG 기억 블록
+  순으로 system prompt에 주입된다.
+
 ### Step 4: (선택) 메모리 저장 - user
 - `chatId`가 있으면 `afterMessageProcess(role='user')`
 
@@ -68,6 +74,11 @@
 - partial 저장 금지: 스트리밍 중간 텍스트는 저장하지 않는다.
 - done 시점에 최종 1회 저장(프론트는 이미 Postgres 저장을 수행 중)
 - 백엔드는 v1에서 Memory(Mongo/Vector) 저장만 담당(확장 가능)
+
+SoT(소스 오브 트루스)
+- 채팅 제품 데이터(채팅/메시지) SoT: Postgres
+- 메모리 파이프라인 로그 SoT: Mongo
+- 검색 가능한 장기 기억 SoT: Postgres + pgvector
 
 ---
 
