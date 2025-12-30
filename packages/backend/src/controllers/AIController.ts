@@ -7,6 +7,7 @@ import { AuthenticatedRequest } from '../middleware/auth'
 import { assembleSystemPrompt, LorebookEntry } from '../services/prompt/PromptAssembly'
 import { runCharacterChatTurnRest, runCharacterChatTurnSse } from '../services/chat/CharacterChatTurnPipeline'
 import { memoryIntegration } from '../services/memory'
+import { resolveOrCreateChatId } from '../services/chat/ChatSessionService'
 
 export class AIController {
   private aiService: AIService
@@ -508,7 +509,8 @@ export class AIController {
       res.setHeader('X-Accel-Buffering', 'no') // Nginx 버퍼링 비활성화
       res.flushHeaders()
 
-      const { chatId: resolvedChatId } = await this.resolveOrCreateChatId({
+      const { chatId: resolvedChatId } = await resolveOrCreateChatId({
+        prisma,
         userId: userId || undefined,
         characterId,
         chatId,
@@ -594,40 +596,6 @@ export class AIController {
         res.end()
       }
     }
-  }
-
-  private async resolveOrCreateChatId(params: {
-    userId?: string
-    characterId: string
-    chatId?: unknown
-  }): Promise<{ chatId?: string }> {
-    const { userId, characterId, chatId } = params
-
-    // If unauthenticated, we cannot create/validate a user chat session.
-    if (!userId) return { chatId: typeof chatId === 'string' && chatId ? chatId : undefined }
-
-    const requestedChatId = typeof chatId === 'string' ? chatId.trim() : ''
-
-    if (requestedChatId) {
-      const existing = await prisma.chat.findFirst({
-        where: { id: requestedChatId, userId },
-        select: { id: true, characterId: true },
-      })
-
-      if (existing && existing.characterId === characterId) {
-        return { chatId: existing.id }
-      }
-    }
-
-    const created = await prisma.chat.create({
-      data: {
-        userId,
-        characterId,
-      },
-      select: { id: true },
-    })
-
-    return { chatId: created.id }
   }
 
   // 🆕 일반 채팅 스트리밍 응답 생성 (SSE)
