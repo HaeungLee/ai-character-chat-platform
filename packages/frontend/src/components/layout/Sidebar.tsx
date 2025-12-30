@@ -3,12 +3,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useAuth } from '@/lib/context'
+import { useAuth, useTheme } from '@/lib/context'
 import { useState, useEffect } from 'react'
 
 export function Sidebar() {
     const pathname = usePathname()
     const { isAuthenticated } = useAuth()
+    const { resolvedTheme, toggleTheme } = useTheme()
     const [isExpanded, setIsExpanded] = useState(false)
     const [mounted, setMounted] = useState(false)
 
@@ -104,14 +105,45 @@ export function Sidebar() {
                 })}
             </nav>
 
-            {/* User Profile */}
-            <div className="p-4 border-t border-[var(--border)]/50">
+            {/* Footer Actions */}
+            <div className="p-4 border-t border-[var(--border)]/50 flex flex-col gap-2">
+                <button
+                    onClick={toggleTheme}
+                    className={`
+                        flex items-center gap-3 w-full p-2 rounded-xl
+                        text-[var(--muted-foreground)] hover:text-[var(--foreground)]
+                        hover:bg-[var(--muted)]/50 transition-colors
+                        ${isExpanded ? 'justify-start' : 'justify-center'}
+                    `}
+                    title="Change Theme"
+                >
+                    <div className="w-8 h-8 flex items-center justify-center">
+                        {resolvedTheme === 'light' && (
+                            <span className="text-xl">☀️</span>
+                        )}
+                        {resolvedTheme === 'dark' && (
+                            <span className="text-xl">🌙</span>
+                        )}
+                        {resolvedTheme === 'nebula' && (
+                            <span className="text-xl">🌌</span>
+                        )}
+                    </div>
+                    {isExpanded && (
+                        <span className="font-medium whitespace-nowrap">
+                            {resolvedTheme === 'light' ? 'Light Mode' :
+                                resolvedTheme === 'dark' ? 'Dark Mode' : 'Nebula Mode'}
+                        </span>
+                    )}
+                </button>
+
                 <button className={`
-          flex items-center gap-3 w-full p-2 rounded-xl
-          hover:bg-[var(--muted)]/50 transition-colors
-          ${isExpanded ? 'justify-start' : 'justify-center'}
-        `}>
-                    <div className="w-8 h-8 rounded-full bg-[var(--secondary)]/20 border border-[var(--secondary)]/50" />
+                    flex items-center gap-3 w-full p-2 rounded-xl
+                    hover:bg-[var(--muted)]/50 transition-colors
+                    ${isExpanded ? 'justify-start' : 'justify-center'}
+                `}>
+                    <div className="w-8 h-8 rounded-full bg-[var(--secondary)]/20 border border-[var(--secondary)]/50 overflow-hidden">
+                        <div className="w-full h-full bg-gradient-to-br from-[var(--primary)] to-[var(--secondary)] opacity-50" />
+                    </div>
                     {isExpanded && (
                         <div className="flex flex-col items-start gap-1 overflow-hidden">
                             <span className="text-sm font-medium truncate w-full text-left">User Profile</span>
