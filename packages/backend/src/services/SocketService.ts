@@ -7,6 +7,7 @@ import { ChatMessageModel } from '../models/memory'
 import { logger } from '../utils/logger'
 import { prisma } from '../config/database'
 import { runCharacterChatTurnSse } from './chat/CharacterChatTurnPipeline'
+import { runCharacterChatTurnRest } from './chat/CharacterChatTurnPipeline'
 
 // =====================================================
 // 타입 정의
@@ -744,6 +745,30 @@ export class SocketService {
         const chatId = roomId
         const aiMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
+        // Build server-side history when client didn't provide it.
+        const effectiveHistory = await this.buildEffectiveConversationHistory({
+          chatId,
+          userId,
+          characterId,
+          providedHistory: conversationHistory,
+          currentUserMessage: content,
+          limit: 20,
+        })
+
+        // Best-effort: persist the user message to Mongo for future turns.
+        try {
+          await ChatMessageModel.create({
+            chatId: roomId,
+            userId,
+            characterId,
+            role: 'user',
+            content,
+            metadata: { clientMessageId: data.clientMessageId },
+          })
+        } catch (dbError) {
+          logger.warn('메시지 DB 저장 실패(스트리밍 사용자):', dbError)
+        }
+
         // 스트리밍 시작 알림
         this.io.to(roomId).emit('message:stream:start', {
           id: aiMessageId,
@@ -777,7 +802,7 @@ export class SocketService {
               exampleDialogues: character.exampleDialogues,
             },
             userMessage: content,
-            conversationHistory,
+            conversationHistory: effectiveHistory,
             aiOptions: {
               provider: 'openrouter',
               model: data.model || process.env.OPENROUTER_DEFAULT_MODEL,
@@ -816,6 +841,23 @@ export class SocketService {
               estimatedTokens: Math.ceil(fullResponse.length / 4),
             },
           })
+
+          // Best-effort: persist assistant message to Mongo.
+          try {
+            await ChatMessageModel.create({
+              chatId: roomId,
+              userId,
+              characterId,
+              role: 'assistant',
+              content: fullResponse,
+              metadata: {
+                model: data.model || process.env.OPENROUTER_DEFAULT_MODEL,
+                temperature: 0.7,
+              },
+            })
+          } catch (dbError) {
+            logger.warn('메시지 DB 저장 실패(스트리밍 어시스턴트):', dbError)
+          }
 
           logger.info(`AI streaming completed: ${aiMessageId}`)
 
@@ -879,11 +921,39 @@ export class SocketService {
     try {
       const character = await this.getCharacterById(characterId)
       if (character) {
-        const aiResponse = await this.aiService.generateCharacterResponse(
-          character,
+        const effectiveHistory = await this.buildEffectiveConversationHistory({
+          chatId: roomId,
+          userId,
+          characterId,
+          providedHistory: [],
+          currentUserMessage: userMessage,
+          limit: 20,
+        })
+
+        const result = await runCharacterChatTurnRest({
+          aiService: this.aiService,
+          userId,
+          chatId: roomId,
+          character: {
+            id: character.id,
+            name: character.name,
+            systemPrompt: character.systemPrompt,
+            personality: character.personality,
+            temperature: character.temperature,
+            lorebookEntries: character.lorebookEntries,
+            exampleDialogues: character.exampleDialogues,
+          },
           userMessage,
-          []
-        )
+          conversationHistory: effectiveHistory,
+          aiOptions: {
+            provider: 'openrouter',
+            model: process.env.OPENROUTER_DEFAULT_MODEL,
+            nsfwMode: process.env.ENABLE_NSFW === 'true',
+          },
+          outputLanguage: 'ko',
+        })
+
+        const aiResponse = result.response
 
         const aiMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         const aiMessage = {
@@ -905,7 +975,11 @@ export class SocketService {
             userId,
             characterId,
             role: 'assistant',
-            content: aiResponse
+            content: aiResponse,
+            metadata: {
+              model: process.env.OPENROUTER_DEFAULT_MODEL,
+              temperature: 0.7,
+            },
           })
         } catch (dbError) {
           logger.warn('AI 응답 DB 저장 실패:', dbError)
@@ -1212,6 +1286,53 @@ export class SocketService {
       })),
       temperature: 0.7,
     }
+  }
+
+  private async buildEffectiveConversationHistory(params: {
+    chatId: string
+    userId: string
+    characterId: string
+    providedHistory: any[]
+    currentUserMessage: string
+    limit: number
+  }): Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>> {
+    const { chatId, userId, characterId, providedHistory, currentUserMessage, limit } = params
+
+    const normalize = (arr: any[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> => {
+      return (arr || [])
+        .map((m) => ({ role: m?.role, content: m?.content }))
+        .filter((m) => (m.role === 'system' || m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    }
+
+    let history = normalize(providedHistory)
+
+    if (history.length === 0) {
+      try {
+        const docs = await ChatMessageModel.find({ chatId, userId, characterId })
+          .sort({ createdAt: -1 })
+          .limit(Math.max(0, limit))
+          .select({ role: 1, content: 1, createdAt: 1 })
+          .lean()
+
+        history = docs
+          .reverse()
+          .map((d: any) => ({ role: d.role, content: d.content }))
+          .filter((m) => (m.role === 'system' || m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      } catch (e) {
+        logger.warn('대화 히스토리 로드 실패(무시):', e)
+        history = []
+      }
+    }
+
+    // Avoid duplicating the current user message: if the last history item matches, drop it.
+    if (history.length > 0) {
+      const last = history[history.length - 1]
+      if (last.role === 'user' && last.content === currentUserMessage) {
+        history = history.slice(0, -1)
+      }
+    }
+
+    return history
   }
 
   // 연결된 사용자 목록 조회
