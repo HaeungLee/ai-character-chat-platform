@@ -508,14 +508,27 @@ export class AIController {
       res.setHeader('X-Accel-Buffering', 'no') // Nginx 버퍼링 비활성화
       res.flushHeaders()
 
+      const { chatId: resolvedChatId } = await this.resolveOrCreateChatId({
+        userId: userId || undefined,
+        characterId,
+        chatId,
+      })
+
       // 시작 이벤트 전송
-      res.write(`data: ${JSON.stringify({ type: 'start', characterId, characterName: character.name })}\n\n`)
+      res.write(
+        `data: ${JSON.stringify({
+          type: 'start',
+          characterId,
+          characterName: character.name,
+          ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        })}\n\n`
+      )
 
       try {
         const stream = runCharacterChatTurnSse({
           aiService: this.aiService,
           userId: userId || undefined,
-          chatId,
+          chatId: resolvedChatId,
           character: {
             id: character.id,
             name: character.name,
@@ -581,6 +594,40 @@ export class AIController {
         res.end()
       }
     }
+  }
+
+  private async resolveOrCreateChatId(params: {
+    userId?: string
+    characterId: string
+    chatId?: unknown
+  }): Promise<{ chatId?: string }> {
+    const { userId, characterId, chatId } = params
+
+    // If unauthenticated, we cannot create/validate a user chat session.
+    if (!userId) return { chatId: typeof chatId === 'string' && chatId ? chatId : undefined }
+
+    const requestedChatId = typeof chatId === 'string' ? chatId.trim() : ''
+
+    if (requestedChatId) {
+      const existing = await prisma.chat.findFirst({
+        where: { id: requestedChatId, userId },
+        select: { id: true, characterId: true },
+      })
+
+      if (existing && existing.characterId === characterId) {
+        return { chatId: existing.id }
+      }
+    }
+
+    const created = await prisma.chat.create({
+      data: {
+        userId,
+        characterId,
+      },
+      select: { id: true },
+    })
+
+    return { chatId: created.id }
   }
 
   // 🆕 일반 채팅 스트리밍 응답 생성 (SSE)

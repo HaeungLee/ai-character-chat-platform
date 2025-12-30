@@ -256,6 +256,11 @@ export default function CharacterChatPage() {
 
                                 try {
                                     const parsed = JSON.parse(payload)
+                                    if (parsed?.type === 'start' && typeof parsed?.chatId === 'string' && parsed.chatId) {
+                                        // Server is the SoT for chatId in SSE.
+                                        setChatId(parsed.chatId)
+                                        continue
+                                    }
                                     if (parsed?.type === 'chunk' && typeof parsed?.content === 'string') {
                                         full += parsed.content
                                         emittedAnyChunk = true

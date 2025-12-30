@@ -9,6 +9,7 @@ interface StreamingMessage {
   type: 'start' | 'chunk' | 'done' | 'error'
   content?: string
   fullResponse?: string
+  chatId?: string
   characterId?: string
   characterName?: string
   error?: string
